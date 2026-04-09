@@ -174,6 +174,8 @@ func Run(ctx context.Context, cfg RunConfig) RunResult {
 	tools := BuiltinTools()
 	totalUsage := provider.Usage{Model: cfg.Model}
 	toolCallCount := 0
+	errorCounts := make(map[string]int) // track repeated errors per tool+args to detect loops
+	const maxRepeatedErrors = 3
 
 	for {
 		// Check tool call budget
@@ -300,6 +302,20 @@ func Run(ctx context.Context, cfg RunConfig) RunResult {
 
 			if result.Error != nil {
 				slog.Warn("tool execution error", "name", tc.Name, "error", result.Error)
+
+				// Track repeated errors to detect infinite loops
+				errorKey := tc.Name + ":" + tc.Arguments
+				errorCounts[errorKey]++
+				if errorCounts[errorKey] >= maxRepeatedErrors {
+					emit(StreamEvent{Type: "error", Error: fmt.Errorf("tool %s failed %d times with same arguments — aborting to prevent loop", tc.Name, maxRepeatedErrors)})
+					return RunResult{
+						Success:    false,
+						Summary:    fmt.Sprintf("Aborted: %s failed %d times with identical arguments", tc.Name, maxRepeatedErrors),
+						ToolCalls:  toolCallCount,
+						TotalUsage: totalUsage,
+						Error:      fmt.Errorf("repeated tool failure loop detected"),
+					}
+				}
 			}
 
 			// Feed result back to the LLM (truncate for small context models)
