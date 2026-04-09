@@ -741,6 +741,10 @@ func (s *Server) runBuildLoop(ctx context.Context, cancel context.CancelFunc, pr
 			milestone = "⚠️ Daily budget exhausted — build paused"
 		case "in-flight":
 			milestone = fmt.Sprintf("🔄 Processing %s: %s", taskID, taskName)
+		case "rework-reset":
+			milestone = fmt.Sprintf("🔁 %s: %s — resetting for retry", taskID, taskName)
+		case "blocked-skipped":
+			milestone = fmt.Sprintf("⏭️ %s: %s — blocked, skipping", taskID, taskName)
 		default:
 			milestone = fmt.Sprintf("Cycle %d: %s → %s", cycle, result.Action.Kind, result.StateUpdate)
 		}
@@ -780,12 +784,13 @@ func (s *Server) runBuildLoop(ctx context.Context, cancel context.CancelFunc, pr
 		if result.Error != nil {
 			break
 		}
-		// Detect stuck cycles — if the same task stays in-flight for 3 consecutive cycles, stop
-		if result.StateUpdate == "in-flight" {
+		// Detect stuck cycles — if no real progress for 3 consecutive cycles, stop
+		noProgress := result.StateUpdate == "in-flight" || result.StateUpdate == "rework-reset" || result.StateUpdate == "blocked-skipped"
+		if noProgress {
 			stuckCount++
 			if stuckCount >= 3 {
-				addMCMessage(fmt.Sprintf("⚠️ %s appears stuck (status: %s). Skipping to avoid a loop. Check the task manually.",
-					taskID, result.Action.Task.Status))
+				addMCMessage(fmt.Sprintf("⚠️ Build appears stuck on %s (%s). Stopping to avoid wasting resources. You can review the task and try again.",
+					taskID, result.StateUpdate))
 				break
 			}
 		} else {

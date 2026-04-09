@@ -49,28 +49,40 @@
   // Listen for MC messages broadcast during builds
   const unsubMC = latestMCMessage.subscribe((msg) => {
     if (msg && msg.project_id === projectId && msg.role === 'assistant') {
-      // Avoid duplicates — check if this message is already in the list
+      // Avoid duplicates
       const isDuplicate = messages.some(m =>
         m.role === 'assistant' && m.content === msg.content && Math.abs(m.timestamp - msg.timestamp) < 2000
       );
       if (!isDuplicate) {
         messages = [...messages, { role: 'assistant', content: msg.content, timestamp: msg.timestamp }];
       }
-    }
-  });
 
-  // Detect build completion and errors from agent log
-  const unsubLog = agentLog.subscribe((log) => {
-    if (buildRunning) {
-      if (log.some(e => e.type === 'complete' && e.content.includes('Build finished'))) {
+      // Detect build state changes from MC messages
+      const content = msg.content;
+      if (content.includes('🚀 Build started')) {
+        buildRunning = true;
+        buildCompleted = false;
+        needsInput = false;
+        buildTriggered = true;
+      }
+      if (content.includes('🏁 Build finished')) {
         buildRunning = false;
         buildCompleted = true;
         needsInput = false;
       }
-      if (log.some(e => e.type === 'error' || (e.type === 'text' && (e.content.includes('failed') || e.content.includes('cancelled') || e.content.includes('budget'))))) {
+      if (content.includes('❌') || content.includes('⚠️ Build appears stuck') || content.includes('cancelled')) {
         buildRunning = false;
         needsInput = true;
       }
+    }
+  });
+
+  // Fallback: detect from agent log (if MC messages miss)
+  const unsubLog = agentLog.subscribe((log) => {
+    if (buildRunning && log.some(e => e.type === 'complete' && e.content.includes('Build finished'))) {
+      buildRunning = false;
+      buildCompleted = true;
+      needsInput = false;
     }
   });
   onDestroy(() => { unsubLog(); unsubMC(); });
