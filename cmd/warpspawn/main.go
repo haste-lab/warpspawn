@@ -26,11 +26,46 @@ import (
 var version = "dev"
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "run" {
-		runCmd(os.Args[2:])
-		return
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "run":
+			runCmd(os.Args[2:])
+			return
+		case "install":
+			installCmd()
+			return
+		case "uninstall":
+			uninstallCmd()
+			return
+		case "help", "--help", "-h":
+			printHelp()
+			return
+		}
 	}
 	serveCmd(os.Args[1:])
+}
+
+func printHelp() {
+	fmt.Printf(`Warpspawn %s — Autonomous agentic software delivery
+
+Usage:
+  warpspawn                    Start the UI server (default)
+  warpspawn run <project>      Run one orchestration cycle on a project
+  warpspawn install            Install to ~/.local/bin for global access
+  warpspawn uninstall          Remove installed binary and optionally data
+
+Server options:
+  --port=N          HTTP port (default: 9320)
+  --no-browser      Don't open browser on startup
+  --host=ADDR       Bind address (default: 127.0.0.1)
+  --debug           Enable debug logging
+
+Run options:
+  --provider=NAME   LLM provider: ollama, openai, anthropic (default: ollama)
+  --model=NAME      Model to use (default: from config)
+  --debug           Enable debug logging
+
+`, version)
 }
 
 // runCmd handles: warpspawn run <project-path> [--provider ollama] [--model qwen2.5-coder:7b]
