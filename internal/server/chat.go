@@ -48,6 +48,7 @@ type chatRequest struct {
 type chatResponse struct {
 	Reply    string        `json:"reply"`
 	Phase    string        `json:"phase"`
+	Model    string        `json:"model"`
 	Messages []ChatMessage `json:"messages"`
 }
 
@@ -150,6 +151,7 @@ func (s *Server) handleProjectChat(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(chatResponse{
 		Reply:    replyText,
 		Phase:    chat.Phase,
+		Model:    model,
 		Messages: chat.Messages,
 	})
 }

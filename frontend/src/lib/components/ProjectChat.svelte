@@ -5,6 +5,7 @@
 
   export let projectId: string;
   export let initialMode: 'quick' | 'guided' = 'quick';
+  export let modelName: string = '';
 
   const dispatch = createEventDispatcher();
 
@@ -12,6 +13,12 @@
     role: string;
     content: string;
     timestamp: number;
+  }
+
+  function formatTime(ts: number): string {
+    if (!ts) return '';
+    const d = new Date(ts);
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   }
 
   let messages: ChatMsg[] = [];
@@ -42,10 +49,8 @@
       if (!resp.ok) throw new Error(await resp.text());
       const data = await resp.json();
       messages = data.messages || [];
-      if (data.reply) {
-        messages = [...messages, { role: 'assistant', content: data.reply, timestamp: Date.now() }];
-      }
       phase = data.phase || 'shaping';
+      if (data.model) modelName = data.model;
     } catch (e: any) {
       addNotification('error', `Chat error: ${e.message}`);
     } finally {
@@ -73,10 +78,8 @@
       if (!resp.ok) throw new Error(await resp.text());
       const data = await resp.json();
       phase = data.phase || phase;
-
-      if (data.reply) {
-        messages = [...messages, { role: 'assistant', content: data.reply, timestamp: Date.now() }];
-      }
+      messages = data.messages || messages;
+      if (data.model) modelName = data.model;
 
       if (phase === 'approved') {
         addNotification('success', 'Plan approved — tasks created. Ready to build.');
@@ -144,12 +147,27 @@
           <div class="msg msg-assistant">
             <span class="msg-avatar">🎛️</span>
             <div class="msg-content">
+              <div class="msg-meta">
+                <span class="msg-sender">Mission Control</span>
+                {#if modelName}
+                  <span class="msg-model">{modelName}</span>
+                {/if}
+                {#if msg.timestamp}
+                  <span class="msg-time">{formatTime(msg.timestamp)}</span>
+                {/if}
+              </div>
               <pre class="msg-text">{msg.content}</pre>
             </div>
           </div>
         {:else if msg.role === 'user'}
           <div class="msg msg-user">
             <div class="msg-content">
+              <div class="msg-meta msg-meta-right">
+                {#if msg.timestamp}
+                  <span class="msg-time">{formatTime(msg.timestamp)}</span>
+                {/if}
+                <span class="msg-sender">You</span>
+              </div>
               <pre class="msg-text">{msg.content}</pre>
             </div>
             <span class="msg-avatar">👤</span>
@@ -244,6 +262,32 @@
   }
   .msg-user .msg-content {
     background: var(--accent-dim);
+  }
+  .msg-meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 4px;
+  }
+  .msg-meta-right {
+    justify-content: flex-end;
+  }
+  .msg-sender {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text-muted);
+  }
+  .msg-model {
+    font-size: 0.65rem;
+    font-family: var(--font-mono);
+    color: var(--text-dim);
+    background: var(--bg);
+    padding: 1px 5px;
+    border-radius: 3px;
+  }
+  .msg-time {
+    font-size: 0.65rem;
+    color: var(--text-dim);
   }
   .msg-text {
     font-family: var(--font-sans);
