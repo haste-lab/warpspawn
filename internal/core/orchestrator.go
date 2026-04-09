@@ -274,8 +274,10 @@ func (o *Orchestrator) manageInFlight(ctx context.Context, projectRoot, projectI
 		return OrchestratorResult{ProjectRoot: projectRoot, ProjectID: projectID, Action: action, StateUpdate: "error"}
 	}
 
-	// Check if review outcome exists
-	if action.ReviewOutcome != nil {
+	// Check if review outcome exists — but skip if task is already in rework
+	// (the old review file still says "rejected", which would re-trigger the
+	// rejected handler and prevent the rework-reset handler from ever running)
+	if action.ReviewOutcome != nil && task.Status != "rework" {
 		switch action.ReviewOutcome.Kind {
 		case "approved":
 			slog.Info("task approved by reviewer", "task", task.TaskID)

@@ -780,15 +780,11 @@ func (s *Server) runBuildLoop(ctx context.Context, cancel context.CancelFunc, pr
 		if result.StateUpdate == "budget-exhausted" || result.StateUpdate == "builder-failed" {
 			break
 		}
-		// Don't stop on blocked-skipped — continue to the next task
-		if result.StateUpdate == "blocked-skipped" {
-			continue
-		}
 		if result.Error != nil {
 			break
 		}
 		// Detect stuck cycles — if no real progress for 3 consecutive cycles, stop
-		noProgress := result.StateUpdate == "in-flight" || result.StateUpdate == "rework-reset" || result.StateUpdate == "blocked-skipped"
+		noProgress := result.StateUpdate == "in-flight" || result.StateUpdate == "rework" || result.StateUpdate == "rework-reset" || result.StateUpdate == "blocked-skipped"
 		if noProgress {
 			stuckCount++
 			if stuckCount >= 3 {
@@ -798,6 +794,10 @@ func (s *Server) runBuildLoop(ctx context.Context, cancel context.CancelFunc, pr
 			}
 		} else {
 			stuckCount = 0
+		}
+		// Don't stop on blocked-skipped — continue to try the next task
+		if result.StateUpdate == "blocked-skipped" {
+			continue
 		}
 	}
 
