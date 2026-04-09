@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher, onMount } from 'svelte';
   import { getProjectDetail } from '../api';
+  import ProjectChat from './ProjectChat.svelte';
 
   export let projectId: string;
 
@@ -8,6 +9,8 @@
 
   let detail: ProjectDetailData | null = null;
   let loading = true;
+  let shapingMode: 'quick' | 'guided' = 'quick';
+  let showModeChoice = true;
   let error = '';
 
   interface TaskInfo {
@@ -93,6 +96,36 @@
         <h3 class="mb-2">Objective</h3>
         <p class="objective-text">{detail.objective}</p>
       </div>
+    {/if}
+
+    <!-- Shaping chat (shown for intake/shaping projects) -->
+    {#if detail.current_stage === 'intake' || detail.current_stage === 'shaping' || (detail.total_tasks === 0 && detail.current_stage !== 'done')}
+      {#if showModeChoice}
+        <div class="card">
+          <h3 class="mb-2">Plan your project</h3>
+          <p class="text-muted text-sm mb-2">Mission Control will create a task plan from your brief. Choose how:</p>
+          <div class="mode-options">
+            <button class="mode-btn" class:active={shapingMode === 'quick'} on:click={() => shapingMode = 'quick'}>
+              <strong>Quick Start</strong>
+              <span class="text-xs text-muted">Generate a plan immediately. You review and approve before building starts.</span>
+            </button>
+            <button class="mode-btn" class:active={shapingMode === 'guided'} on:click={() => shapingMode = 'guided'}>
+              <strong>Guided Shaping</strong>
+              <span class="text-xs text-muted">MC asks questions first, proposes alternatives, then creates a plan.</span>
+            </button>
+          </div>
+          <button class="btn btn-primary mt-2" on:click={() => showModeChoice = false}>
+            Continue with {shapingMode === 'quick' ? 'Quick Start' : 'Guided Shaping'}
+          </button>
+        </div>
+      {:else}
+        <ProjectChat
+          {projectId}
+          initialMode={shapingMode}
+          on:approved={async () => { detail = await getProjectDetail(projectId); }}
+          on:build-started={async () => { detail = await getProjectDetail(projectId); }}
+        />
+      {/if}
     {/if}
 
     <!-- Stats row -->
@@ -190,6 +223,32 @@
     align-self: flex-start;
   }
   .back-btn:hover { color: var(--text); }
+  .mode-options {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 4px;
+  }
+  .mode-btn {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px 14px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text);
+    cursor: pointer;
+    text-align: left;
+    transition: all 0.15s;
+  }
+  .mode-btn:hover {
+    border-color: rgba(255, 255, 255, 0.12);
+  }
+  .mode-btn.active {
+    border-color: rgba(114, 230, 184, 0.3);
+    background: var(--bg-elevated);
+  }
   .detail-header {
     display: flex;
     justify-content: space-between;
