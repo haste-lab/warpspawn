@@ -241,6 +241,110 @@
     </section>
 
     <section class="settings-section">
+      <h2>Guardrails</h2>
+      <p class="text-muted text-sm mb-2">Security controls that protect your machine from unintended agent actions.</p>
+
+      <div class="card">
+        <div class="settings-row">
+          <div>
+            <label>Shell execution mode</label>
+            <p class="text-xs text-dim">Controls what shell commands agents can run on your machine.</p>
+          </div>
+          <select value={$settings.execution.shell_mode} style="max-width: 160px"
+            on:change={(e) => handleExecutionChange('shell_mode', e.currentTarget.value)}>
+            <option value="restricted">Restricted (recommended)</option>
+            <option value="unrestricted">Unrestricted</option>
+            <option value="approval">Approval required</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="guardrail-grid">
+        <div class="guardrail-card card">
+          <div class="guardrail-header">
+            <span class="guardrail-icon">🛡️</span>
+            <strong>Shell Allowlist</strong>
+            <span class="badge" class:badge-green={$settings.execution.shell_mode === 'restricted'} class:badge-amber={$settings.execution.shell_mode === 'unrestricted'} class:badge-red={$settings.execution.shell_mode === 'approval'}>
+              {$settings.execution.shell_mode}
+            </span>
+          </div>
+          {#if $settings.execution.shell_mode === 'restricted'}
+            <p class="text-xs text-muted mt-2">Only these commands are allowed:</p>
+            <div class="guardrail-list">
+              <span class="mono text-xs">node npm npx python python3 pip go cargo rustc make git ls cat head tail mkdir cp mv touch echo test wc sort uniq grep find chmod rm sh bash</span>
+            </div>
+            <p class="text-xs text-muted mt-2">Shell bypass protection active — <code>bash -c</code> payloads are parsed and checked against the allowlist.</p>
+          {:else if $settings.execution.shell_mode === 'unrestricted'}
+            <p class="text-xs text-amber mt-2">All commands allowed. Dangerous patterns still blocked (rm -rf /, sudo, fork bombs).</p>
+          {:else}
+            <p class="text-xs text-red mt-2">All commands blocked. Agents cannot execute shell commands.</p>
+          {/if}
+        </div>
+
+        <div class="guardrail-card card">
+          <div class="guardrail-header">
+            <span class="guardrail-icon">🚫</span>
+            <strong>Always Blocked</strong>
+            <span class="badge badge-green">Active</span>
+          </div>
+          <p class="text-xs text-muted mt-2">These are blocked in ALL modes, including unrestricted:</p>
+          <div class="guardrail-list">
+            <span class="mono text-xs">rm -rf / &bull; sudo &bull; su &bull; chmod 777 / &bull; mkfs &bull; dd if= &bull; fork bombs</span>
+          </div>
+          <p class="text-xs text-muted mt-2">Network commands blocked in restricted mode:</p>
+          <div class="guardrail-list">
+            <span class="mono text-xs">curl &bull; wget &bull; ssh &bull; scp &bull; nc &bull; ncat &bull; netcat</span>
+          </div>
+        </div>
+
+        <div class="guardrail-card card">
+          <div class="guardrail-header">
+            <span class="guardrail-icon">📁</span>
+            <strong>Path Containment</strong>
+            <span class="badge badge-green">Active</span>
+          </div>
+          <p class="text-xs text-muted mt-2">Agents can only read and write files inside the project directory. Path traversal (../) is blocked.</p>
+        </div>
+
+        <div class="guardrail-card card">
+          <div class="guardrail-header">
+            <span class="guardrail-icon">🔒</span>
+            <strong>Role Boundaries</strong>
+            <span class="badge badge-green">Active</span>
+          </div>
+          <p class="text-xs text-muted mt-2">Each role has file edit restrictions. After every agent run, changes are validated against the role's allowed paths. Unauthorized files are reverted.</p>
+        </div>
+
+        <div class="guardrail-card card">
+          <div class="guardrail-header">
+            <span class="guardrail-icon">💰</span>
+            <strong>Budget Enforcement</strong>
+            <span class="badge badge-green">Active</span>
+          </div>
+          <p class="text-xs text-muted mt-2">Token usage tracked per API call. Execution halts when daily budget limit is reached. Ollama calls are free.</p>
+        </div>
+
+        <div class="guardrail-card card">
+          <div class="guardrail-header">
+            <span class="guardrail-icon">⏱️</span>
+            <strong>Timeout Protection</strong>
+            <span class="badge badge-green">Active</span>
+          </div>
+          <p class="text-xs text-muted mt-2">Agent wallclock timeout: {$settings.execution.agent_timeout_s}s. Per-command timeout: 30s. Tool call limit: {$settings.execution.max_tool_calls} calls per run.</p>
+        </div>
+
+        <div class="guardrail-card card">
+          <div class="guardrail-header">
+            <span class="guardrail-icon">🔄</span>
+            <strong>Git Rollback</strong>
+            <span class="badge badge-green">Active</span>
+          </div>
+          <p class="text-xs text-muted mt-2">Auto-commit before and after every agent run. If an agent produces bad output, changes can be reverted via git.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="settings-section">
       <h2>Execution</h2>
       <div class="card">
         <div class="settings-row">
@@ -258,18 +362,6 @@
           </div>
           <input type="number" value={$settings.execution.agent_timeout_s} style="max-width: 80px"
             on:change={(e) => handleExecutionChange('agent_timeout_s', parseInt(e.currentTarget.value))} />
-        </div>
-        <div class="settings-row">
-          <div>
-            <label>Shell execution mode</label>
-            <p class="text-xs text-dim">Controls what shell commands agents can run on your machine.</p>
-          </div>
-          <select value={$settings.execution.shell_mode} style="max-width: 160px"
-            on:change={(e) => handleExecutionChange('shell_mode', e.currentTarget.value)}>
-            <option value="unrestricted">Unrestricted</option>
-            <option value="restricted">Restricted (allowlist)</option>
-            <option value="approval">Approval required</option>
-          </select>
         </div>
       </div>
     </section>
@@ -396,6 +488,41 @@
     max-width: 300px;
     font-family: var(--font-mono);
     font-size: 0.8rem;
+  }
+  .guardrail-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 8px;
+    margin-top: 10px;
+  }
+  .guardrail-card {
+    padding: 12px;
+  }
+  .guardrail-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.9rem;
+  }
+  .guardrail-icon {
+    font-size: 1rem;
+  }
+  .guardrail-list {
+    padding: 6px 10px;
+    background: var(--bg);
+    border-radius: var(--radius-sm);
+    margin-top: 4px;
+    line-height: 1.6;
+    word-break: break-all;
+  }
+  .text-amber { color: var(--amber); }
+  .text-red { color: var(--red); }
+  code {
+    font-family: var(--font-mono);
+    font-size: 0.8em;
+    background: var(--bg);
+    padding: 1px 4px;
+    border-radius: 3px;
   }
   .settings-row {
     display: flex;
