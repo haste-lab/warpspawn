@@ -29,6 +29,7 @@ type Orchestrator struct {
 	ReviewerModel string
 	ShellMode     string // unrestricted, restricted, approval
 	MaxPromptLen  int    // 0 = unlimited, e.g. 3000 for 4K context models
+	ContextSize   int    // num_ctx for Ollama
 }
 
 // RunResult is the outcome of a single orchestration cycle for a project.
@@ -157,7 +158,8 @@ func (o *Orchestrator) executeBuilder(ctx context.Context, projectRoot, projectI
 		ShellMode:      agent.ShellMode(o.ShellMode),
 		MaxPromptLen:   o.MaxPromptLen,
 		CommandTimeout: 30 * time.Second,
-		OnChunk:        o.OnEvent,
+		ContextSize:   o.ContextSize,
+		OnChunk:       o.OnEvent,
 	})
 	duration := time.Since(startTime)
 
@@ -333,7 +335,8 @@ func (o *Orchestrator) executeReviewer(ctx context.Context, projectRoot, project
 		ShellMode:      agent.ShellMode(o.ShellMode),
 		MaxPromptLen:   o.MaxPromptLen,
 		CommandTimeout: 30 * time.Second,
-		OnChunk:        o.OnEvent,
+		ContextSize:   o.ContextSize,
+		OnChunk:       o.OnEvent,
 	})
 	duration := time.Since(startTime)
 

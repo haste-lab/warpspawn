@@ -383,15 +383,14 @@
         <div class="settings-row">
           <div>
             <label>Context size (tokens)</label>
-            <p class="text-xs text-dim">Recommended: 8192 for 4GB VRAM, 16384 for 8GB, 32768 for 16GB+</p>
+            <p class="text-xs text-dim">Minimum 16K for quality output. Larger = better results but more VRAM.</p>
           </div>
           <select value={$settings.execution.llm_context_size || 16384} style="max-width: 140px"
             on:change={(e) => handleExecutionChange('llm_context_size', parseInt(e.currentTarget.value))}>
-            <option value="4096">4,096 (minimal)</option>
-            <option value="8192">8,192 (4GB VRAM)</option>
             <option value="16384">16,384 (8GB VRAM)</option>
             <option value="32768">32,768 (16GB VRAM)</option>
             <option value="65536">65,536 (24GB+ VRAM)</option>
+            <option value="131072">131,072 (32GB+ VRAM)</option>
           </select>
         </div>
       </div>

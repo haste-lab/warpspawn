@@ -175,8 +175,8 @@ func (o *OllamaProvider) Complete(ctx context.Context, messages []Message, opts 
 	// Always set num_ctx — Ollama defaults to 2048 if not specified,
 	// which is far too small for agentic tool-use workloads.
 	numCtx := opts.ContextSize
-	if numCtx < 2048 {
-		numCtx = 16384 // default 16K if not configured
+	if numCtx < 16384 {
+		numCtx = 16384 // minimum 16K for quality agentic output
 	}
 	reqBody.Options = &ollamaOptions{
 		NumCtx: numCtx,

@@ -105,6 +105,7 @@ type RunConfig struct {
 	AgentTimeout   time.Duration // wallclock timeout for the entire run
 	ShellMode      ShellMode
 	MaxPromptLen   int // max characters in user prompt (for small context models)
+	ContextSize    int // num_ctx for Ollama
 	OnChunk        func(StreamEvent) // callback for streaming events
 }
 
@@ -208,8 +209,9 @@ func Run(ctx context.Context, cfg RunConfig) RunResult {
 
 		// Call LLM
 		stream, err := cfg.Provider.Complete(ctx, messages, provider.CompletionOptions{
-			Model: cfg.Model,
-			Tools: tools,
+			Model:       cfg.Model,
+			Tools:       tools,
+			ContextSize: cfg.ContextSize,
 		})
 		if err != nil {
 			emit(StreamEvent{Type: "error", Error: err})

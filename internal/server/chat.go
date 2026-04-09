@@ -179,7 +179,8 @@ func (s *Server) handleProjectChat(w http.ResponseWriter, r *http.Request) {
 
 	// Call LLM
 	stream, err := prov.Complete(r.Context(), llmMessages, provider.CompletionOptions{
-		Model: model,
+		Model:       model,
+		ContextSize: s.cfg.Execution.LLMContextSize,
 	})
 	if err != nil {
 		http.Error(w, "LLM error: "+err.Error(), http.StatusInternalServerError)
@@ -277,18 +278,42 @@ Do NOT ask questions first — go straight to the plan.`
 		{Role: "user", Content: "Project brief:\n\n" + brief + "\n\n" + projectContext},
 	}
 
-	// Add conversation history (skip the first user message since brief is already included)
+	// Filter and prune conversation history for LLM context:
+	// - Skip the initial "start" message
+	// - Skip build milestone messages (🚀, ✅, 🎉, 🏁, ❌, ⚠️) — these are for the user, not the LLM
+	// - Keep only the last 10 meaningful messages to stay within context limits
+	var relevantMessages []provider.Message
 	for i, msg := range chat.Messages {
 		if i == 0 && msg.Role == "user" {
-			continue // skip initial "start" message
+			continue
 		}
-		messages = append(messages, provider.Message{
+		// Skip automated build status messages
+		if msg.Role == "assistant" && isBuildStatusMessage(msg.Content) {
+			continue
+		}
+		relevantMessages = append(relevantMessages, provider.Message{
 			Role:    msg.Role,
 			Content: msg.Content,
 		})
 	}
 
+	// Keep last 10 messages to avoid context overflow
+	if len(relevantMessages) > 10 {
+		relevantMessages = relevantMessages[len(relevantMessages)-10:]
+	}
+	messages = append(messages, relevantMessages...)
+
 	return messages
+}
+
+func isBuildStatusMessage(content string) bool {
+	prefixes := []string{"🚀", "✅", "🎉", "🏁", "❌", "⚠️", "🔄"}
+	for _, p := range prefixes {
+		if strings.HasPrefix(content, p) {
+			return true
+		}
+	}
+	return false
 }
 
 func buildProjectContext(projectID string) string {
@@ -650,6 +675,7 @@ func (s *Server) runBuildLoop(ctx context.Context, cancel context.CancelFunc, pr
 		MaxTools:      s.cfg.Execution.MaxToolCalls,
 		TimeoutS:      s.cfg.Execution.AgentTimeoutS,
 		ShellMode:     s.cfg.Execution.ShellMode,
+		ContextSize:   s.cfg.Execution.LLMContextSize,
 		OnEvent: func(event agent.StreamEvent) {
 			s.Broadcast(SSEEvent{
 				Type: "agent." + event.Type,
