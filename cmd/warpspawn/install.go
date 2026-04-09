@@ -3,9 +3,13 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"net"
+	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 )
 
 func installCmd() {
@@ -80,7 +84,53 @@ func installCmd() {
 	// Check PATH
 	checkPath(binDir)
 
+	// Environment checks
+	fmt.Println()
+	runInstallChecks()
+
 	fmt.Println("\nDone. Run 'warpspawn' from any directory to start.")
+}
+
+func runInstallChecks() {
+	fmt.Println("Environment checks:")
+
+	// Check git
+	if _, err := exec.LookPath("git"); err != nil {
+		fmt.Println("  ⚠ git not found — auto-commit (rollback support) will be disabled")
+	} else {
+		fmt.Println("  ✓ git found")
+	}
+
+	// Check Ollama
+	resp, err := http.Get("http://localhost:11434/api/version")
+	if err != nil {
+		fmt.Println("  ⚠ Ollama not detected at localhost:11434 — you'll need a cloud API key (OpenAI or Anthropic)")
+	} else {
+		resp.Body.Close()
+		fmt.Println("  ✓ Ollama detected")
+	}
+
+	// Check default port
+	ln, err := net.Listen("tcp", "127.0.0.1:9320")
+	if err != nil {
+		fmt.Println("  ⚠ Port 9320 is in use — Warpspawn will auto-select another port at startup")
+	} else {
+		ln.Close()
+		fmt.Println("  ✓ Port 9320 available")
+	}
+
+	// Check disk space
+	var stat syscall.Statfs_t
+	home, _ := os.UserHomeDir()
+	if err := syscall.Statfs(home, &stat); err == nil {
+		freeBytes := stat.Bavail * uint64(stat.Bsize)
+		freeMB := freeBytes / (1024 * 1024)
+		if freeMB < 500 {
+			fmt.Printf("  ⚠ Low disk space: %d MB free (recommend 500+ MB)\n", freeMB)
+		} else {
+			fmt.Printf("  ✓ Disk space: %d MB free\n", freeMB)
+		}
+	}
 }
 
 func uninstallCmd() {
