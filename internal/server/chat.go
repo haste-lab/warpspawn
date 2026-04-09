@@ -37,7 +37,13 @@ type ProjectChat struct {
 // In-memory chat sessions (persisted to disk per project)
 var (
 	chatSessions = make(map[string]*ProjectChat)
-	chatMu       sync.RWMutex
+	chatMu       sync.Mutex // full mutex, not RW — chat handlers mutate the session
+)
+
+// Active build tracking — prevents concurrent builds on same project
+var (
+	activeBuilds = make(map[string]context.CancelFunc)
+	buildMu      sync.Mutex
 )
 
 type chatRequest struct {
@@ -60,10 +66,14 @@ func (s *Server) handleProjectChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req chatRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
 		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+
+	// Lock per-project chat — prevents race conditions from concurrent requests
+	chatMu.Lock()
+	defer chatMu.Unlock()
 
 	// Get or create chat session
 	chat := getOrCreateChat(projectID, req.Mode)
@@ -469,20 +479,37 @@ func (s *Server) handleStartBuild(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check for concurrent build on this project
+	buildMu.Lock()
+	if _, running := activeBuilds[projectID]; running {
+		buildMu.Unlock()
+		http.Error(w, "build already running for this project", http.StatusConflict)
+		return
+	}
+
 	paths := config.DefaultPaths()
 	projectRoot := filepath.Join(paths.ProjectDir, projectID)
 
 	// Pick provider and model
 	prov := s.pickProvider()
 	if prov == nil {
+		buildMu.Unlock()
 		http.Error(w, "no LLM provider available", http.StatusServiceUnavailable)
 		return
 	}
 
-	// Run orchestrator
+	// Run orchestrator with tracking
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	activeBuilds[projectID] = cancel
+	buildMu.Unlock()
+
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
+		defer func() {
+			buildMu.Lock()
+			delete(activeBuilds, projectID)
+			buildMu.Unlock()
+		}()
 
 		workflow := core.DefaultWorkflow
 		budget := guard.NewBudget(paths.DataDir)

@@ -44,14 +44,13 @@ func (db *DB) Close() error {
 	return db.conn.Close()
 }
 
-// Backup copies the database to a backup file.
+// Backup creates a consistent backup of the database using SQLite's VACUUM INTO.
 func (db *DB) Backup() error {
 	backupPath := db.dbPath + ".bak"
-	data, err := os.ReadFile(db.dbPath)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(backupPath, data, 0644)
+	// Remove existing backup first (VACUUM INTO fails if target exists)
+	os.Remove(backupPath)
+	_, err := db.conn.Exec("VACUUM INTO ?", backupPath)
+	return err
 }
 
 func (db *DB) migrate() error {
@@ -208,10 +207,18 @@ func (db *DB) DeleteProject(projectID string) error {
 	if err != nil {
 		return err
 	}
-	tx.Exec("DELETE FROM runs WHERE project_id = ?", projectID)
-	tx.Exec("DELETE FROM reviews WHERE project_id = ?", projectID)
-	tx.Exec("DELETE FROM tasks WHERE project_id = ?", projectID)
-	tx.Exec("DELETE FROM projects WHERE id = ?", projectID)
+	queries := []string{
+		"DELETE FROM runs WHERE project_id = ?",
+		"DELETE FROM reviews WHERE project_id = ?",
+		"DELETE FROM tasks WHERE project_id = ?",
+		"DELETE FROM projects WHERE id = ?",
+	}
+	for _, q := range queries {
+		if _, err := tx.Exec(q, projectID); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("delete project %s: %w", projectID, err)
+		}
+	}
 	return tx.Commit()
 }
 

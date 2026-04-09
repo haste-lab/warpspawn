@@ -71,29 +71,71 @@ func ValidateCommand(command string, args []string, mode ShellMode) error {
 			return fmt.Errorf("blocked: command %q not in allowlist (shell mode: restricted)", baseName)
 		}
 
-		// Block network commands even if somehow in allowlist
+		// Block network commands
 		for _, blocked := range []string{"curl", "wget", "ssh", "scp", "nc", "ncat", "netcat"} {
 			if baseName == blocked {
 				return fmt.Errorf("blocked: network command %q not allowed in restricted mode", baseName)
 			}
 		}
 
-		// Check bash -c / sh -c payloads — the actual commands inside the string
-		if (baseName == "bash" || baseName == "sh") && len(args) >= 2 && args[0] == "-c" {
-			payload := strings.Join(args[1:], " ")
-			for _, subcmd := range extractCommandNames(payload) {
-				if !AllowedCommands[subcmd] {
-					return fmt.Errorf("blocked: %s -c contains %q which is not in allowlist", baseName, subcmd)
-				}
-				for _, blocked := range []string{"curl", "wget", "ssh", "scp", "nc", "ncat", "netcat"} {
-					if subcmd == blocked {
-						return fmt.Errorf("blocked: %s -c contains network command %q", baseName, subcmd)
-					}
+		// Block shell -c entirely — too many bypass vectors (subshells, backticks, process substitution)
+		if (baseName == "bash" || baseName == "sh") && containsFlag(args, "-c") {
+			return fmt.Errorf("blocked: %s -c is not allowed in restricted mode (use individual commands instead)", baseName)
+		}
+
+		// Block interpreter eval flags — prevents network calls via python/node
+		if (baseName == "python" || baseName == "python3" || baseName == "node") && containsFlag(args, "-c", "-e", "--eval") {
+			return fmt.Errorf("blocked: %s with -c/-e flag not allowed in restricted mode (can execute arbitrary code)", baseName)
+		}
+
+		// Validate arguments for filesystem commands — block access outside project directory
+		if isFilesystemCommand(baseName) {
+			for _, arg := range args {
+				if err := validateCommandArg(arg); err != nil {
+					return fmt.Errorf("blocked: %s argument %v", baseName, err)
 				}
 			}
 		}
 	}
 
+	return nil
+}
+
+// containsFlag checks if any of the given flags appear in the argument list.
+func containsFlag(args []string, flags ...string) bool {
+	for _, arg := range args {
+		for _, flag := range flags {
+			if arg == flag {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// isFilesystemCommand returns true if the command can read/write arbitrary files.
+func isFilesystemCommand(baseName string) bool {
+	switch baseName {
+	case "cat", "head", "tail", "cp", "mv", "rm", "chmod", "ls", "find", "grep":
+		return true
+	}
+	return false
+}
+
+// validateCommandArg checks that a command argument doesn't reference paths outside the project.
+func validateCommandArg(arg string) error {
+	// Skip flags
+	if strings.HasPrefix(arg, "-") {
+		return nil
+	}
+	// Block absolute paths (must be relative to project root)
+	if strings.HasPrefix(arg, "/") {
+		return fmt.Errorf("absolute path %q not allowed (must be relative to project directory)", arg)
+	}
+	// Block parent traversal
+	if strings.Contains(arg, "..") {
+		return fmt.Errorf("path traversal %q not allowed", arg)
+	}
 	return nil
 }
 

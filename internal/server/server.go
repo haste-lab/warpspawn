@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -77,15 +78,17 @@ func (s *Server) registerRoutes() {
 // auth wraps a handler with session token authentication.
 func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Check Authorization header
+		// Check Authorization header (constant-time comparison to prevent timing attacks)
 		authHeader := r.Header.Get("Authorization")
-		if authHeader == "Bearer "+s.token {
+		expected := "Bearer " + s.token
+		if len(authHeader) == len(expected) && subtle.ConstantTimeCompare([]byte(authHeader), []byte(expected)) == 1 {
 			next(w, r)
 			return
 		}
 
 		// Check query parameter (for SSE EventSource which can't set headers)
-		if r.URL.Query().Get("token") == s.token {
+		queryToken := r.URL.Query().Get("token")
+		if len(queryToken) == len(s.token) && subtle.ConstantTimeCompare([]byte(queryToken), []byte(s.token)) == 1 {
 			next(w, r)
 			return
 		}
@@ -188,7 +191,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	var updated config.Config
-	if err := json.NewDecoder(r.Body).Decode(&updated); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&updated); err != nil {
 		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 		return
 	}
