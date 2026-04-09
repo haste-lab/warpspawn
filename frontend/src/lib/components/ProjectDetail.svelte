@@ -350,6 +350,8 @@
           initialMode={isIntake ? shapingMode : 'quick'}
           existingMessages={existingChat?.messages || null}
           existingPhase={existingChat?.phase || ''}
+          totalTasks={detail?.total_tasks || 0}
+          doneTasks={detail?.done_tasks || 0}
           on:approved={refreshDetail}
           on:build-started={refreshDetail}
         />

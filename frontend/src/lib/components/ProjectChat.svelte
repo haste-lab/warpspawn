@@ -8,6 +8,8 @@
   export let modelName: string = '';
   export let existingMessages: ChatMsg[] | null = null;
   export let existingPhase: string = '';
+  export let totalTasks: number = 0;
+  export let doneTasks: number = 0;
 
   const dispatch = createEventDispatcher();
 
@@ -32,6 +34,9 @@
   let buildCompleted = false;
   let buildTriggered = false;
   let needsInput = false;
+
+  $: hasUnfinishedTasks = totalTasks > 0 && doneTasks < totalTasks;
+  $: showContinueButton = hasUnfinishedTasks && !buildRunning && phase === 'approved' && buildTriggered && !buildCompleted;
 
   // Detect build completion and errors from agent log
   const unsubLog = agentLog.subscribe((log) => {
@@ -121,6 +126,30 @@
     }
   }
 
+  async function pauseBuild() {
+    try {
+      const resp = await fetch(`/api/run/abort`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ project_id: projectId }),
+      });
+      if (resp.ok) {
+        buildRunning = false;
+        needsInput = true;
+        addNotification('warning', 'Build paused');
+      }
+    } catch { /* ignore */ }
+  }
+
+  function changePlan() {
+    phase = 'plan-review';
+    buildTriggered = false;
+    buildCompleted = false;
+    needsInput = false;
+    addNotification('info', 'You can now modify the plan. Type your changes and MC will update it.');
+  }
+
   async function startBuild() {
     loading = true;
     try {
@@ -189,15 +218,23 @@
         {/if}
       </span>
     </div>
-    {#if buildRunning}
-      <span class="badge badge-blue"><span class="pulse-dot-inline"></span> Building...</span>
-    {:else if buildCompleted}
-      <span class="badge badge-green">Build complete</span>
-    {:else if (phase === 'approved' || phase === 'plan-review') && !buildTriggered}
-      <button class="btn btn-primary btn-sm" on:click={startBuild} disabled={loading}>
-        {loading ? 'Starting...' : 'Start Building →'}
-      </button>
-    {/if}
+    <div class="flex gap-2">
+      {#if buildRunning}
+        <button class="btn btn-danger btn-sm" on:click={pauseBuild}>Pause Building</button>
+      {:else if buildCompleted && !hasUnfinishedTasks}
+        <span class="badge badge-green">Build complete</span>
+      {:else if showContinueButton || needsInput}
+        <button class="btn btn-primary btn-sm" on:click={startBuild} disabled={loading}>
+          {loading ? 'Starting...' : 'Continue Building →'}
+        </button>
+        <button class="btn btn-sm" on:click={changePlan}>Change Plan</button>
+      {:else if (phase === 'approved' || phase === 'plan-review') && !buildTriggered}
+        <button class="btn btn-primary btn-sm" on:click={startBuild} disabled={loading}>
+          {loading ? 'Starting...' : 'Start Building →'}
+        </button>
+        <button class="btn btn-sm" on:click={changePlan}>Change Plan</button>
+      {/if}
+    </div>
   </div>
 
   <div class="chat-messages" bind:this={chatContainer}>
