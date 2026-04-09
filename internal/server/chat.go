@@ -727,7 +727,9 @@ func (s *Server) runBuildLoop(ctx context.Context, cancel context.CancelFunc, pr
 			taskID = result.Action.Task.TaskID
 		}
 
+		// Only broadcast meaningful milestones — skip noisy/repetitive states
 		var milestone string
+		broadcast := true
 		switch result.StateUpdate {
 		case "builder-complete":
 			milestone = fmt.Sprintf("✅ Builder completed %s: %s", taskID, taskName)
@@ -739,28 +741,29 @@ func (s *Server) runBuildLoop(ctx context.Context, cancel context.CancelFunc, pr
 			milestone = fmt.Sprintf("❌ Builder failed on %s: %s", taskID, taskName)
 		case "budget-exhausted":
 			milestone = "⚠️ Daily budget exhausted — build paused"
-		case "in-flight":
-			milestone = fmt.Sprintf("🔄 Processing %s: %s", taskID, taskName)
 		case "rework-reset":
 			milestone = fmt.Sprintf("🔁 %s: %s — resetting for retry", taskID, taskName)
 		case "blocked-skipped":
 			milestone = fmt.Sprintf("⏭️ %s: %s — blocked, skipping", taskID, taskName)
 		default:
-			milestone = fmt.Sprintf("Cycle %d: %s → %s", cycle, result.Action.Kind, result.StateUpdate)
+			// in-flight, rework-reset repeats, and generic cycles are noise — don't show
+			broadcast = false
 		}
 
-		s.Broadcast(SSEEvent{
-			Type: "build.milestone",
-			Data: map[string]interface{}{
-				"project_id": projectID,
-				"cycle":      cycle,
-				"action":     result.Action.Kind,
-				"state":      result.StateUpdate,
-				"task_id":    taskID,
-				"task_name":  taskName,
-				"milestone":  milestone,
-			},
-		})
+		if broadcast && milestone != "" {
+			s.Broadcast(SSEEvent{
+				Type: "build.milestone",
+				Data: map[string]interface{}{
+					"project_id": projectID,
+					"cycle":      cycle,
+					"action":     result.Action.Kind,
+					"state":      result.StateUpdate,
+					"task_id":    taskID,
+					"task_name":  taskName,
+					"milestone":  milestone,
+				},
+			})
+		}
 
 		switch result.StateUpdate {
 		case "done":
