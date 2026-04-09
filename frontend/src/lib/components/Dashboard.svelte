@@ -153,7 +153,7 @@
             </div>
           {/if}
 
-          <div class="flex gap-2 justify-between">
+          <div class="form-actions">
             <button class="btn" on:click={() => showNewProject = false}>Cancel</button>
             <button class="btn btn-primary" on:click={handleCreate} disabled={!newProjectBrief.trim() || creating}>
               {creating ? 'Creating...' : 'Create & Start'}
@@ -232,26 +232,38 @@
     gap: 8px;
   }
   .strategy-btn {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
+    display: inline-flex;
     align-items: center;
-    gap: 2px;
-    padding: 10px 14px;
+    gap: 4px;
+    padding: 5px 12px;
     background: var(--bg-surface);
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
-    color: var(--text);
+    color: var(--text-muted);
     cursor: pointer;
+    font-size: 0.8rem;
     transition: all 0.15s;
   }
   .strategy-btn:hover {
-    border-color: rgba(255, 255, 255, 0.15);
-    background: var(--bg-elevated);
+    border-color: rgba(255, 255, 255, 0.12);
+    color: var(--text);
   }
   .strategy-btn.active {
-    border-color: var(--accent);
-    background: var(--accent-dim);
+    border-color: rgba(114, 230, 184, 0.3);
+    color: var(--text);
+    background: var(--bg-elevated);
+  }
+  .strategy-btn strong {
+    font-weight: 500;
+  }
+
+  .form-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: space-between;
+    margin-top: 8px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
   }
 
   /* Custom role picker */
