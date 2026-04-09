@@ -249,7 +249,7 @@
                   <div class="task-left">
                     <span class="task-icon {si.cls}">{si.icon}</span>
                     <div class="task-info">
-                      <span class="task-title">{task.title || task.id}</span>
+                      <span class="task-title">{task.id}: {task.title || 'Untitled'}</span>
                       <div class="task-pipeline">
                         {#each ['ready-for-build', 'in-build', 'in-review', 'done'] as stage}
                           {@const stageOrder = ['intake', 'shaping', 'ready-for-build', 'in-build', 'in-review', 'done']}

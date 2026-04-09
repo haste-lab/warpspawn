@@ -94,6 +94,47 @@ func (s *Server) handleProjectChat(w http.ResponseWriter, r *http.Request) {
 		model = "qwen3:8b"
 	}
 
+	// Check if user wants to continue/resume building
+	if req.Message != "" && chat.Phase == "approved" {
+		lower := strings.ToLower(req.Message)
+		if strings.Contains(lower, "proceed") || strings.Contains(lower, "continue") ||
+			strings.Contains(lower, "build") || strings.Contains(lower, "resume") ||
+			strings.Contains(lower, "start") || lower == "go" {
+
+			// Check if there are unfinished tasks
+			tasks := core.ListTasks(projectRoot)
+			unfinished := 0
+			for _, t := range tasks {
+				if t.Status != "done" && t.Status != "archived" {
+					unfinished++
+				}
+			}
+
+			if unfinished > 0 {
+				replyText := fmt.Sprintf("Resuming build — %d tasks remaining. I'll report progress as they complete.", unfinished)
+				chat.Messages = append(chat.Messages, ChatMessage{
+					Role:      "assistant",
+					Content:   replyText,
+					Timestamp: time.Now().UnixMilli(),
+				})
+				saveChat(projectRoot, chat)
+				chatMu.Unlock()
+
+				// Trigger the build
+				go s.triggerBuild(projectID, projectRoot)
+
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(chatResponse{
+					Reply:    replyText,
+					Phase:    chat.Phase,
+					Model:    model,
+					Messages: chat.Messages,
+				})
+				return
+			}
+		}
+	}
+
 	// Check if user is approving — handle immediately without LLM call
 	if req.Message != "" && chat.Phase == "plan-review" {
 		lower := strings.ToLower(req.Message)
@@ -565,6 +606,169 @@ func min(a, b int) int {
 	return b
 }
 
+// triggerBuild starts the autonomous build loop for a project.
+// Can be called from the chat handler or the build button.
+func (s *Server) triggerBuild(projectID, projectRoot string) {
+	buildMu.Lock()
+	if _, running := activeBuilds[projectID]; running {
+		buildMu.Unlock()
+		return // already running
+	}
+
+	paths := config.DefaultPaths()
+	prov := s.pickProvider()
+	if prov == nil {
+		buildMu.Unlock()
+		return
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	activeBuilds[projectID] = cancel
+	buildMu.Unlock()
+
+	go s.runBuildLoop(ctx, cancel, projectID, projectRoot, paths, prov)
+}
+
+func (s *Server) runBuildLoop(ctx context.Context, cancel context.CancelFunc, projectID, projectRoot string, paths config.Paths, prov provider.Provider) {
+	defer cancel()
+	defer func() {
+		buildMu.Lock()
+		delete(activeBuilds, projectID)
+		buildMu.Unlock()
+	}()
+
+	workflow := core.DefaultWorkflow
+	budget := guard.NewBudget(paths.DataDir)
+
+	orch := &core.Orchestrator{
+		Workflow:      &workflow,
+		Provider:      prov,
+		DB:            s.db,
+		Budget:        budget,
+		BuilderModel:  s.cfg.Roles["builder"].Model,
+		ReviewerModel: s.cfg.Roles["reviewer-qa"].Model,
+		MaxTools:      s.cfg.Execution.MaxToolCalls,
+		TimeoutS:      s.cfg.Execution.AgentTimeoutS,
+		ShellMode:     s.cfg.Execution.ShellMode,
+		OnEvent: func(event agent.StreamEvent) {
+			s.Broadcast(SSEEvent{
+				Type: "agent." + event.Type,
+				Data: map[string]interface{}{
+					"project_id": projectID,
+					"content":    event.Text,
+					"summary":    event.Summary,
+				},
+			})
+		},
+	}
+
+	addMCMessage := func(text string) {
+		chatMu.Lock()
+		chat := getOrCreateChat(projectID, "quick")
+		chat.Messages = append(chat.Messages, ChatMessage{
+			Role:      "assistant",
+			Content:   text,
+			Timestamp: time.Now().UnixMilli(),
+		})
+		saveChat(projectRoot, chat)
+		chatMu.Unlock()
+	}
+
+	addMCMessage("🚀 Build started. I'll report progress as tasks complete.")
+
+	maxCycles := 50
+	for cycle := 1; cycle <= maxCycles; cycle++ {
+		select {
+		case <-ctx.Done():
+			addMCMessage("⚠️ Build was cancelled.")
+			s.Broadcast(SSEEvent{Type: "build.cancelled", Data: map[string]interface{}{"project_id": projectID}})
+			return
+		default:
+		}
+
+		result := orch.RunProject(ctx, projectRoot)
+
+		taskName := ""
+		taskID := ""
+		if result.Action.Task != nil {
+			taskName = result.Action.Task.Title
+			taskID = result.Action.Task.TaskID
+		}
+
+		var milestone string
+		switch result.StateUpdate {
+		case "builder-complete":
+			milestone = fmt.Sprintf("✅ Builder completed %s: %s", taskID, taskName)
+		case "review-complete":
+			milestone = fmt.Sprintf("✅ Reviewer finished %s: %s", taskID, taskName)
+		case "done":
+			milestone = fmt.Sprintf("🎉 %s closed: %s", taskID, taskName)
+		case "builder-failed":
+			milestone = fmt.Sprintf("❌ Builder failed on %s: %s", taskID, taskName)
+		case "budget-exhausted":
+			milestone = "⚠️ Daily budget exhausted — build paused"
+		case "in-flight":
+			milestone = fmt.Sprintf("🔄 Processing %s: %s", taskID, taskName)
+		default:
+			milestone = fmt.Sprintf("Cycle %d: %s → %s", cycle, result.Action.Kind, result.StateUpdate)
+		}
+
+		s.Broadcast(SSEEvent{
+			Type: "build.milestone",
+			Data: map[string]interface{}{
+				"project_id": projectID,
+				"cycle":      cycle,
+				"action":     result.Action.Kind,
+				"state":      result.StateUpdate,
+				"task_id":    taskID,
+				"task_name":  taskName,
+				"milestone":  milestone,
+			},
+		})
+
+		switch result.StateUpdate {
+		case "done":
+			addMCMessage(milestone)
+		case "builder-failed":
+			addMCMessage(milestone + "\n\nYou can reply here to discuss the issue or click Start Building to retry.")
+		case "budget-exhausted":
+			addMCMessage(milestone)
+		}
+
+		if result.Action.Kind == "no-action" {
+			break
+		}
+		if result.StateUpdate == "budget-exhausted" || result.StateUpdate == "builder-failed" {
+			break
+		}
+		if result.Error != nil {
+			break
+		}
+	}
+
+	appFiles := listAppFiles(projectRoot)
+	summary := fmt.Sprintf("🏁 Build finished.\n\nProject files are at:\n  %s\n", projectRoot)
+	if len(appFiles) > 0 {
+		summary += "\nApplication files:\n"
+		for _, f := range appFiles {
+			summary += fmt.Sprintf("  %s\n", f)
+		}
+		for _, entry := range []string{"index.html", "app/index.html", "public/index.html"} {
+			if _, err := os.Stat(filepath.Join(projectRoot, entry)); err == nil {
+				summary += fmt.Sprintf("\nTo open: xdg-open %s/%s\n", projectRoot, entry)
+				break
+			}
+		}
+	}
+	summary += "\nFiles persist on disk — they stay when Warpspawn is closed."
+
+	addMCMessage(summary)
+	s.Broadcast(SSEEvent{
+		Type: "build.complete",
+		Data: map[string]interface{}{"project_id": projectID, "summary": summary},
+	})
+}
+
 func (s *Server) handleStartBuild(w http.ResponseWriter, r *http.Request) {
 	projectID := r.PathValue("id")
 	if projectID == "" {
@@ -572,184 +776,18 @@ func (s *Server) handleStartBuild(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check for concurrent build on this project
+	// Check for concurrent build
 	buildMu.Lock()
 	if _, running := activeBuilds[projectID]; running {
 		buildMu.Unlock()
 		http.Error(w, "build already running for this project", http.StatusConflict)
 		return
 	}
+	buildMu.Unlock()
 
 	paths := config.DefaultPaths()
 	projectRoot := filepath.Join(paths.ProjectDir, projectID)
-
-	// Pick provider and model
-	prov := s.pickProvider()
-	if prov == nil {
-		buildMu.Unlock()
-		http.Error(w, "no LLM provider available", http.StatusServiceUnavailable)
-		return
-	}
-
-	// Run orchestrator with tracking — no overall timeout (per-task timeout is enforced by the orchestrator)
-	ctx, cancel := context.WithCancel(context.Background())
-	activeBuilds[projectID] = cancel
-	buildMu.Unlock()
-
-	go func() {
-		defer cancel()
-		defer func() {
-			buildMu.Lock()
-			delete(activeBuilds, projectID)
-			buildMu.Unlock()
-		}()
-
-		workflow := core.DefaultWorkflow
-		budget := guard.NewBudget(paths.DataDir)
-
-		orch := &core.Orchestrator{
-			Workflow:      &workflow,
-			Provider:      prov,
-			DB:            s.db,
-			Budget:        budget,
-			BuilderModel:  s.cfg.Roles["builder"].Model,
-			ReviewerModel: s.cfg.Roles["reviewer-qa"].Model,
-			MaxTools:      s.cfg.Execution.MaxToolCalls,
-			TimeoutS:      s.cfg.Execution.AgentTimeoutS,
-			ShellMode:     s.cfg.Execution.ShellMode,
-			OnEvent: func(event agent.StreamEvent) {
-				s.Broadcast(SSEEvent{
-					Type: "agent." + event.Type,
-					Data: map[string]interface{}{
-						"project_id": projectID,
-						"content":    event.Text,
-						"summary":    event.Summary,
-					},
-				})
-			},
-		}
-
-		// Helper to add MC messages to chat during build
-		addMCMessage := func(text string) {
-			chatMu.Lock()
-			chat := getOrCreateChat(projectID, "quick")
-			chat.Messages = append(chat.Messages, ChatMessage{
-				Role:      "assistant",
-				Content:   text,
-				Timestamp: time.Now().UnixMilli(),
-			})
-			saveChat(projectRoot, chat)
-			chatMu.Unlock()
-		}
-
-		addMCMessage("🚀 Build started. I'll report progress as tasks complete.")
-
-		// Build loop: keep running cycles until no more actionable work
-		maxCycles := 50 // safety cap
-		for cycle := 1; cycle <= maxCycles; cycle++ {
-			select {
-			case <-ctx.Done():
-				addMCMessage("⚠️ Build was cancelled.")
-				s.Broadcast(SSEEvent{Type: "build.cancelled", Data: map[string]interface{}{"project_id": projectID}})
-				return
-			default:
-			}
-
-			result := orch.RunProject(ctx, projectRoot)
-
-			// Build milestone reporting
-			taskName := ""
-			taskID := ""
-			if result.Action.Task != nil {
-				taskName = result.Action.Task.Title
-				taskID = result.Action.Task.TaskID
-			}
-
-			var milestone string
-			switch result.StateUpdate {
-			case "builder-complete":
-				milestone = fmt.Sprintf("✅ Builder completed %s: %s", taskID, taskName)
-			case "review-complete":
-				milestone = fmt.Sprintf("✅ Reviewer finished %s: %s", taskID, taskName)
-			case "done":
-				milestone = fmt.Sprintf("🎉 %s closed: %s", taskID, taskName)
-			case "builder-failed":
-				milestone = fmt.Sprintf("❌ Builder failed on %s: %s", taskID, taskName)
-			case "budget-exhausted":
-				milestone = "⚠️ Daily budget exhausted — build paused"
-			case "in-flight":
-				milestone = fmt.Sprintf("🔄 Processing %s: %s", taskID, taskName)
-			default:
-				milestone = fmt.Sprintf("Cycle %d: %s → %s", cycle, result.Action.Kind, result.StateUpdate)
-			}
-
-			s.Broadcast(SSEEvent{
-				Type: "build.milestone",
-				Data: map[string]interface{}{
-					"project_id": projectID,
-					"cycle":      cycle,
-					"action":     result.Action.Kind,
-					"state":      result.StateUpdate,
-					"task_id":    taskID,
-					"task_name":  taskName,
-					"milestone":  milestone,
-				},
-			})
-
-			// Add MC chat messages for key milestones
-			switch result.StateUpdate {
-			case "done":
-				addMCMessage(milestone)
-			case "builder-failed":
-				addMCMessage(milestone + "\n\nYou can reply here to discuss the issue or click Start Building to retry.")
-			case "budget-exhausted":
-				addMCMessage(milestone)
-			}
-
-			// Stop conditions
-			if result.Action.Kind == "no-action" {
-				break
-			}
-			if result.StateUpdate == "budget-exhausted" {
-				s.Broadcast(SSEEvent{Type: "build.budget-exhausted", Data: map[string]interface{}{"project_id": projectID}})
-				break
-			}
-			if result.StateUpdate == "builder-failed" {
-				break
-			}
-			if result.Error != nil {
-				break
-			}
-		}
-
-		// Build summary
-		appFiles := listAppFiles(projectRoot)
-		summary := fmt.Sprintf("🏁 Build finished.\n\nProject files are at:\n  %s\n", projectRoot)
-		if len(appFiles) > 0 {
-			summary += "\nApplication files:\n"
-			for _, f := range appFiles {
-				summary += fmt.Sprintf("  %s\n", f)
-			}
-			// Check for common entry points
-			for _, entry := range []string{"index.html", "app/index.html", "public/index.html"} {
-				if _, err := os.Stat(filepath.Join(projectRoot, entry)); err == nil {
-					summary += fmt.Sprintf("\nTo open: xdg-open %s/%s\n", projectRoot, entry)
-					break
-				}
-			}
-		}
-		summary += "\nFiles persist on disk — they stay when Warpspawn is closed."
-
-		addMCMessage(summary)
-
-		s.Broadcast(SSEEvent{
-			Type: "build.complete",
-			Data: map[string]interface{}{
-				"project_id": projectID,
-				"summary":    summary,
-			},
-		})
-	}()
+	s.triggerBuild(projectID, projectRoot)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "started", "project_id": projectID})

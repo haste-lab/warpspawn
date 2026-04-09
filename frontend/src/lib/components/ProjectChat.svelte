@@ -31,12 +31,20 @@
   let buildRunning = false;
   let buildCompleted = false;
   let buildTriggered = false;
+  let needsInput = false;
 
-  // Detect build completion from agent log
+  // Detect build completion and errors from agent log
   const unsubLog = agentLog.subscribe((log) => {
-    if (buildRunning && log.some(e => e.type === 'complete' && e.content.includes('Build finished'))) {
-      buildRunning = false;
-      buildCompleted = true;
+    if (buildRunning) {
+      if (log.some(e => e.type === 'complete' && e.content.includes('Build finished'))) {
+        buildRunning = false;
+        buildCompleted = true;
+        needsInput = false;
+      }
+      if (log.some(e => e.type === 'error' || (e.type === 'text' && (e.content.includes('failed') || e.content.includes('cancelled') || e.content.includes('budget'))))) {
+        buildRunning = false;
+        needsInput = true;
+      }
     }
   });
   onDestroy(() => unsubLog());
@@ -159,8 +167,26 @@
     <div class="flex items-center gap-2">
       <span>🎛️</span>
       <strong class="text-sm">Mission Control</strong>
-      <span class="badge" class:badge-blue={phase === 'shaping'} class:badge-amber={phase === 'plan-review'} class:badge-green={phase === 'approved'}>
-        {phase === 'shaping' ? 'Shaping' : phase === 'plan-review' ? 'Plan Review' : 'Approved'}
+      <span class="badge"
+        class:badge-blue={buildRunning || phase === 'shaping'}
+        class:badge-amber={phase === 'plan-review' && !buildRunning && !buildCompleted && !needsInput}
+        class:badge-green={(buildCompleted || (phase === 'approved' && !needsInput)) && !buildRunning}
+        class:badge-red={needsInput}>
+        {#if needsInput}
+          User input required
+        {:else if buildRunning}
+          Building
+        {:else if buildCompleted}
+          Complete
+        {:else if phase === 'shaping'}
+          Shaping
+        {:else if phase === 'plan-review'}
+          Plan Review
+        {:else if phase === 'approved'}
+          Ready
+        {:else}
+          Chat
+        {/if}
       </span>
     </div>
     {#if buildRunning}
