@@ -496,6 +496,7 @@ func (s *Server) handleStartBuild(w http.ResponseWriter, r *http.Request) {
 			ReviewerModel: s.cfg.Roles["reviewer-qa"].Model,
 			MaxTools:      s.cfg.Execution.MaxToolCalls,
 			TimeoutS:      s.cfg.Execution.AgentTimeoutS,
+			ShellMode:     s.cfg.Execution.ShellMode,
 			OnEvent: func(event agent.StreamEvent) {
 				s.Broadcast(SSEEvent{
 					Type: "agent." + event.Type,

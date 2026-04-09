@@ -102,6 +102,9 @@ type RunConfig struct {
 	UserPrompt     string
 	MaxToolCalls   int
 	CommandTimeout time.Duration
+	AgentTimeout   time.Duration // wallclock timeout for the entire run
+	ShellMode      ShellMode
+	MaxPromptLen   int // max characters in user prompt (for small context models)
 	OnChunk        func(StreamEvent) // callback for streaming events
 }
 
@@ -133,15 +136,39 @@ func Run(ctx context.Context, cfg RunConfig) RunResult {
 	if cfg.CommandTimeout <= 0 {
 		cfg.CommandTimeout = 30 * time.Second
 	}
+	if cfg.ShellMode == "" {
+		cfg.ShellMode = ShellRestricted // default to restricted, not unrestricted
+	}
+
+	// Apply wallclock timeout for the entire agent run
+	if cfg.AgentTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, cfg.AgentTimeout)
+		defer cancel()
+	}
 
 	emit := cfg.OnChunk
 	if emit == nil {
 		emit = func(StreamEvent) {}
 	}
 
+	// Truncate prompt if model has small context window
+	userPrompt := cfg.UserPrompt
+	if cfg.MaxPromptLen > 0 && len(userPrompt) > cfg.MaxPromptLen {
+		userPrompt = userPrompt[:cfg.MaxPromptLen] + "\n\n(prompt truncated to fit context window)"
+		slog.Warn("prompt truncated for small context model", "original_len", len(cfg.UserPrompt), "max_len", cfg.MaxPromptLen)
+	}
+
 	messages := []provider.Message{
 		{Role: "system", Content: cfg.SystemPrompt},
-		{Role: "user", Content: cfg.UserPrompt},
+		{Role: "user", Content: userPrompt},
+	}
+
+	// Build tool execution config
+	toolCfg := ExecuteConfig{
+		ProjectRoot:    cfg.ProjectRoot,
+		CommandTimeout: cfg.CommandTimeout,
+		ShellMode:      cfg.ShellMode,
 	}
 
 	tools := BuiltinTools()
@@ -247,7 +274,7 @@ func Run(ctx context.Context, cfg RunConfig) RunResult {
 
 			// Check for task_complete signal
 			if tc.Name == "task_complete" {
-				result := ExecuteTool(cfg.ProjectRoot, tc, cfg.CommandTimeout)
+				result := ExecuteTool(toolCfg, tc)
 				emit(StreamEvent{Type: "tool_result", ToolResult: &result})
 				emit(StreamEvent{Type: "complete", Summary: result.Content})
 
@@ -268,17 +295,26 @@ func Run(ctx context.Context, cfg RunConfig) RunResult {
 
 			slog.Debug("executing tool", "name", tc.Name, "call_id", tc.ID, "count", toolCallCount)
 
-			result := ExecuteTool(cfg.ProjectRoot, tc, cfg.CommandTimeout)
+			result := ExecuteTool(toolCfg, tc)
 			emit(StreamEvent{Type: "tool_result", ToolResult: &result})
 
 			if result.Error != nil {
 				slog.Warn("tool execution error", "name", tc.Name, "error", result.Error)
 			}
 
-			// Feed result back to the LLM
+			// Feed result back to the LLM (truncate for small context models)
+			content := result.Content
+			maxResult := 8000 // default max result size
+			if cfg.MaxPromptLen > 0 && cfg.MaxPromptLen < 8000 {
+				maxResult = cfg.MaxPromptLen / 2 // for 4K context, limit results to ~2K
+			}
+			if len(content) > maxResult {
+				content = content[:maxResult] + "\n... (truncated to fit context)"
+			}
+
 			messages = append(messages, provider.Message{
 				Role:       "tool",
-				Content:    result.Content,
+				Content:    content,
 				ToolCallID: tc.ID,
 			})
 		}

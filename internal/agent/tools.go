@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -11,6 +12,76 @@ import (
 
 	"github.com/haste-lab/warpspawn/internal/provider"
 )
+
+// ShellMode controls what commands agents can execute.
+type ShellMode string
+
+const (
+	ShellUnrestricted ShellMode = "unrestricted"
+	ShellRestricted   ShellMode = "restricted"
+	ShellApproval     ShellMode = "approval" // not implemented in v1 — blocks all commands
+)
+
+// AllowedCommands is the default allowlist for restricted shell mode.
+var AllowedCommands = map[string]bool{
+	"node": true, "npm": true, "npx": true,
+	"python": true, "python3": true, "pip": true, "pip3": true,
+	"go": true, "cargo": true, "rustc": true, "make": true,
+	"git": true,
+	"ls": true, "cat": true, "head": true, "tail": true,
+	"mkdir": true, "cp": true, "mv": true, "touch": true, "echo": true,
+	"test": true, "wc": true, "sort": true, "uniq": true,
+	"grep": true, "find": true, "dirname": true, "basename": true,
+	"chmod": true, "rm": true, // rm allowed but rm -rf / blocked below
+	"sh": true, "bash": true, // needed for scripts but args are checked
+}
+
+// BlockedPatterns are dangerous command patterns blocked even in unrestricted mode.
+var BlockedPatterns = []string{
+	"rm -rf /",
+	"rm -rf /*",
+	"rm -rf ~",
+	"sudo ",
+	"su ",
+	"chmod 777 /",
+	"mkfs",
+	"dd if=",
+	"> /dev/sd",
+	":(){ :|:& };:", // fork bomb
+}
+
+// ValidateCommand checks if a command is allowed under the given shell mode.
+func ValidateCommand(command string, args []string, mode ShellMode) error {
+	fullCmd := command + " " + strings.Join(args, " ")
+
+	// Always block dangerous patterns regardless of mode
+	for _, pattern := range BlockedPatterns {
+		if strings.Contains(fullCmd, pattern) {
+			return fmt.Errorf("blocked: dangerous command pattern %q", pattern)
+		}
+	}
+
+	if mode == ShellApproval {
+		return fmt.Errorf("blocked: shell mode is 'approval' (not implemented — all commands blocked)")
+	}
+
+	if mode == ShellRestricted {
+		// Extract base command name (strip path)
+		baseName := filepath.Base(command)
+		if !AllowedCommands[baseName] {
+			return fmt.Errorf("blocked: command %q not in allowlist (shell mode: restricted)", baseName)
+		}
+
+		// Block network commands even if somehow in allowlist
+		for _, blocked := range []string{"curl", "wget", "ssh", "scp", "nc", "ncat", "netcat"} {
+			if baseName == blocked {
+				return fmt.Errorf("blocked: network command %q not allowed in restricted mode", baseName)
+			}
+		}
+	}
+
+	return nil
+}
 
 // ToolResult is the outcome of executing a tool call.
 type ToolResult struct {
@@ -104,9 +175,20 @@ func BuiltinTools() []provider.ToolDef {
 	}
 }
 
+// ExecuteConfig holds settings for tool execution.
+type ExecuteConfig struct {
+	ProjectRoot    string
+	CommandTimeout time.Duration
+	ShellMode      ShellMode
+}
+
 // ExecuteTool runs a tool call and returns the result.
-// projectRoot is the absolute path to the project directory — all file paths are resolved relative to it.
-func ExecuteTool(projectRoot string, call provider.ToolCall, commandTimeout time.Duration) ToolResult {
+func ExecuteTool(cfg ExecuteConfig, call provider.ToolCall) ToolResult {
+	projectRoot := cfg.ProjectRoot
+	commandTimeout := cfg.CommandTimeout
+	if commandTimeout <= 0 {
+		commandTimeout = 30 * time.Second
+	}
 	var args map[string]interface{}
 	if err := json.Unmarshal([]byte(call.Arguments), &args); err != nil {
 		return ToolResult{
@@ -124,7 +206,7 @@ func ExecuteTool(projectRoot string, call provider.ToolCall, commandTimeout time
 	case "list_files":
 		return executeListFiles(projectRoot, call.ID, args)
 	case "run_command":
-		return executeRunCommand(projectRoot, call.ID, args, commandTimeout)
+		return executeRunCommand(projectRoot, call.ID, args, commandTimeout, cfg.ShellMode)
 	case "task_complete":
 		summary, _ := args["summary"].(string)
 		return ToolResult{
@@ -206,7 +288,7 @@ func executeListFiles(projectRoot, callID string, args map[string]interface{}) T
 	return ToolResult{ToolCallID: callID, Content: strings.Join(lines, "\n")}
 }
 
-func executeRunCommand(projectRoot, callID string, args map[string]interface{}, timeout time.Duration) ToolResult {
+func executeRunCommand(projectRoot, callID string, args map[string]interface{}, timeout time.Duration, shellMode ShellMode) ToolResult {
 	command, _ := args["command"].(string)
 	if command == "" {
 		return ToolResult{ToolCallID: callID, Content: "Error: empty command", Error: fmt.Errorf("empty command")}
@@ -221,20 +303,33 @@ func executeRunCommand(projectRoot, callID string, args map[string]interface{}, 
 		}
 	}
 
-	cmd := exec.Command(command, cmdArgs...)
+	// Validate command against shell mode
+	if err := ValidateCommand(command, cmdArgs, shellMode); err != nil {
+		return ToolResult{ToolCallID: callID, Content: fmt.Sprintf("Command blocked: %v", err), Error: err}
+	}
+
+	// Execute with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, command, cmdArgs...)
 	cmd.Dir = projectRoot
 
-	// Combine stdout and stderr
 	output, err := cmd.CombinedOutput()
 	result := string(output)
+
+	if ctx.Err() == context.DeadlineExceeded {
+		result = fmt.Sprintf("%s\nCommand timed out after %s", result, timeout)
+		return ToolResult{ToolCallID: callID, Content: result, Error: fmt.Errorf("command timed out")}
+	}
 
 	if err != nil {
 		result = fmt.Sprintf("%s\nCommand error: %v", result, err)
 	}
 
-	// Truncate very long output
-	if len(result) > 32000 {
-		result = result[:32000] + "\n... (output truncated)"
+	// Truncate very long output to save context window
+	if len(result) > 16000 {
+		result = result[:16000] + "\n... (output truncated to save context)"
 	}
 
 	return ToolResult{ToolCallID: callID, Content: result}

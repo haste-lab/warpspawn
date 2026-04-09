@@ -25,8 +25,10 @@ type Orchestrator struct {
 	OnEvent       func(agent.StreamEvent) // callback for UI streaming
 	MaxTools      int
 	TimeoutS      int
-	BuilderModel  string // model for Builder agent
-	ReviewerModel string // model for Reviewer agent
+	BuilderModel  string
+	ReviewerModel string
+	ShellMode     string // unrestricted, restricted, approval
+	MaxPromptLen  int    // 0 = unlimited, e.g. 3000 for 4K context models
 }
 
 // RunResult is the outcome of a single orchestration cycle for a project.
@@ -145,13 +147,17 @@ func (o *Orchestrator) executeBuilder(ctx context.Context, projectRoot, projectI
 	// Run agent
 	startTime := time.Now()
 	agentResult := agent.Run(ctx, agent.RunConfig{
-		ProjectRoot:  projectRoot,
-		Model:        o.BuilderModel,
-		Provider:     o.Provider,
-		SystemPrompt: systemPrompt,
-		UserPrompt:   userPrompt,
-		MaxToolCalls: o.MaxTools,
-		OnChunk:      o.OnEvent,
+		ProjectRoot:    projectRoot,
+		Model:          o.BuilderModel,
+		Provider:       o.Provider,
+		SystemPrompt:   systemPrompt,
+		UserPrompt:     userPrompt,
+		MaxToolCalls:   o.MaxTools,
+		AgentTimeout:   time.Duration(o.TimeoutS) * time.Second,
+		ShellMode:      agent.ShellMode(o.ShellMode),
+		MaxPromptLen:   o.MaxPromptLen,
+		CommandTimeout: 30 * time.Second,
+		OnChunk:        o.OnEvent,
 	})
 	duration := time.Since(startTime)
 
@@ -283,13 +289,17 @@ func (o *Orchestrator) executeReviewer(ctx context.Context, projectRoot, project
 
 	startTime := time.Now()
 	agentResult := agent.Run(ctx, agent.RunConfig{
-		ProjectRoot:  projectRoot,
-		Model:        o.ReviewerModel,
-		Provider:     o.Provider,
-		SystemPrompt: systemPrompt,
-		UserPrompt:   userPrompt,
-		MaxToolCalls: o.MaxTools,
-		OnChunk:      o.OnEvent,
+		ProjectRoot:    projectRoot,
+		Model:          o.ReviewerModel,
+		Provider:       o.Provider,
+		SystemPrompt:   systemPrompt,
+		UserPrompt:     userPrompt,
+		MaxToolCalls:   o.MaxTools,
+		AgentTimeout:   time.Duration(o.TimeoutS) * time.Second,
+		ShellMode:      agent.ShellMode(o.ShellMode),
+		MaxPromptLen:   o.MaxPromptLen,
+		CommandTimeout: 30 * time.Second,
+		OnChunk:        o.OnEvent,
 	})
 	duration := time.Since(startTime)
 
