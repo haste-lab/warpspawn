@@ -1,6 +1,8 @@
 <script lang="ts">
+  import { createEventDispatcher } from 'svelte';
   import type { ProjectSummary } from '../api';
   export let project: ProjectSummary;
+  const dispatch = createEventDispatcher();
 
   $: progressPct = project.TotalTasks > 0 ? (project.DoneTasks / project.TotalTasks) * 100 : 0;
   $: stageColor = {
@@ -30,7 +32,7 @@
   </div>
 
   <div class="project-actions">
-    <button class="btn btn-sm">View</button>
+    <button class="btn btn-sm" on:click|stopPropagation={() => dispatch('view', project.ID)}>View</button>
     <button class="btn btn-sm btn-primary">Run Next</button>
   </div>
 </div>

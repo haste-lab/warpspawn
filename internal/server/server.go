@@ -49,6 +49,7 @@ func (s *Server) registerRoutes() {
 	// API routes (authenticated)
 	s.mux.HandleFunc("GET /api/health", s.auth(s.handleHealth))
 	s.mux.HandleFunc("GET /api/projects", s.auth(s.handleListProjects))
+	s.mux.HandleFunc("GET /api/project/{id}", s.auth(s.handleProjectDetail))
 	s.mux.HandleFunc("GET /api/budget", s.auth(s.handleBudget))
 	s.mux.HandleFunc("GET /api/events", s.auth(s.handleSSE))
 
@@ -169,6 +170,22 @@ func (s *Server) Broadcast(event SSEEvent) {
 func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(s.cfg)
+}
+
+func (s *Server) handleProjectDetail(w http.ResponseWriter, r *http.Request) {
+	projectID := r.PathValue("id")
+	if projectID == "" {
+		http.Error(w, "project ID required", http.StatusBadRequest)
+		return
+	}
+
+	detail, err := s.db.GetProjectDetail(projectID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(detail)
 }
 
 // securityHeaders adds CSP, CORS, and other security headers.

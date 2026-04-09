@@ -22,6 +22,7 @@ async function api<T>(path: string, options?: RequestInit): Promise<T> {
 // API endpoints
 export const getHealth = () => api<{ status: string; version: string }>('/api/health');
 export const getProjects = () => api<ProjectSummary[]>('/api/projects');
+export const getProjectDetail = (id: string) => api<ProjectDetailData>(`/api/project/${id}`);
 export const getBudget = () => api<BudgetInfo>('/api/budget');
 export const getSettings = () => api<AppSettings>('/api/settings');
 export const updateSettings = (settings: Partial<AppSettings>) =>
@@ -91,6 +92,26 @@ export interface ProviderConfig {
 export interface RoleConfig {
   provider: string;
   model: string;
+}
+
+export interface ProjectDetailData {
+  id: string;
+  name: string;
+  path: string;
+  lifecycle: string;
+  current_stage: string;
+  objective: string;
+  brief: string;
+  total_tasks: number;
+  done_tasks: number;
+  tasks: { id: string; title: string; status: string; priority: string; owner_role: string }[];
+  stats: {
+    total_runs: number;
+    total_input_tokens: number;
+    total_output_tokens: number;
+    total_cost_usd: number;
+    total_tool_calls: number;
+  };
 }
 
 export interface SSEEvent {

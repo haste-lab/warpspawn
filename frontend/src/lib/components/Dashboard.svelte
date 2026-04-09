@@ -2,11 +2,13 @@
   import { projects, budget, activeRun, agentLog, canAct } from '../stores/app';
   import AgentPanel from './AgentPanel.svelte';
   import ProjectCard from './ProjectCard.svelte';
+  import ProjectDetail from './ProjectDetail.svelte';
 
   let showNewProject = false;
   let newProjectBrief = '';
   let newProjectName = '';
   let creating = false;
+  let viewingProjectId: string | null = null;
 
   async function handleCreate() {
     if (!newProjectBrief.trim()) return;
@@ -17,56 +19,64 @@
     newProjectBrief = '';
     newProjectName = '';
   }
+
+  function openProject(id: string) {
+    viewingProjectId = id;
+  }
 </script>
 
 <div class="dashboard">
-  <div class="dashboard-header">
-    <h1>Projects</h1>
-    <button class="btn btn-primary" on:click={() => showNewProject = !showNewProject} disabled={!$canAct}>
-      + New Project
-    </button>
-  </div>
+  {#if viewingProjectId}
+    <ProjectDetail projectId={viewingProjectId} on:back={() => viewingProjectId = null} />
+  {:else}
+    <div class="dashboard-header">
+      <h1>Projects</h1>
+      <button class="btn btn-primary" on:click={() => showNewProject = !showNewProject} disabled={!$canAct}>
+        + New Project
+      </button>
+    </div>
 
-  {#if showNewProject}
-    <div class="card new-project-form">
-      <h3>Create a new project</h3>
-      <p class="text-muted text-sm mb-2">Describe what you want to build. Warpspawn will decompose it into tasks and start building.</p>
+    {#if showNewProject}
+      <div class="card new-project-form">
+        <h3>Create a new project</h3>
+        <p class="text-muted text-sm mb-2">Describe what you want to build. Warpspawn will decompose it into tasks and start building.</p>
 
-      <div class="flex-col gap-3">
-        <div>
-          <label>Project name (optional)</label>
-          <input type="text" bind:value={newProjectName} placeholder="e.g., Weather Dashboard" />
-        </div>
-        <div>
-          <label>Project brief</label>
-          <textarea bind:value={newProjectBrief} rows="4"
-            placeholder="Build a local weather dashboard that fetches data from Open-Meteo API and displays current conditions and 5-day forecast. Use vanilla HTML/CSS/JS. No framework."></textarea>
-        </div>
-        <div class="flex gap-2 justify-between">
-          <button class="btn" on:click={() => showNewProject = false}>Cancel</button>
-          <button class="btn btn-primary" on:click={handleCreate} disabled={!newProjectBrief.trim() || creating}>
-            {creating ? 'Creating...' : 'Create & Start'}
-          </button>
+        <div class="flex-col gap-3">
+          <div>
+            <label>Project name (optional)</label>
+            <input type="text" bind:value={newProjectName} placeholder="e.g., Weather Dashboard" />
+          </div>
+          <div>
+            <label>Project brief</label>
+            <textarea bind:value={newProjectBrief} rows="4"
+              placeholder="Build a local weather dashboard that fetches data from Open-Meteo API and displays current conditions and 5-day forecast. Use vanilla HTML/CSS/JS. No framework."></textarea>
+          </div>
+          <div class="flex gap-2 justify-between">
+            <button class="btn" on:click={() => showNewProject = false}>Cancel</button>
+            <button class="btn btn-primary" on:click={handleCreate} disabled={!newProjectBrief.trim() || creating}>
+              {creating ? 'Creating...' : 'Create & Start'}
+            </button>
+          </div>
         </div>
       </div>
-    </div>
-  {/if}
+    {/if}
 
-  {#if $projects.length === 0 && !showNewProject}
-    <div class="empty-state">
-      <div class="empty-icon">📦</div>
-      <h2>No projects yet</h2>
-      <p class="text-muted">Create your first project and watch Warpspawn build it autonomously.</p>
-      {#if !$canAct}
-        <p class="text-sm text-dim mt-2">Complete the setup wizard first to enable project creation.</p>
-      {/if}
-    </div>
-  {:else}
-    <div class="project-grid">
-      {#each $projects as project (project.ID)}
-        <ProjectCard {project} />
-      {/each}
-    </div>
+    {#if $projects.length === 0 && !showNewProject}
+      <div class="empty-state">
+        <div class="empty-icon">📦</div>
+        <h2>No projects yet</h2>
+        <p class="text-muted">Create your first project and watch Warpspawn build it autonomously.</p>
+        {#if !$canAct}
+          <p class="text-sm text-dim mt-2">Complete the setup wizard first to enable project creation.</p>
+        {/if}
+      </div>
+    {:else}
+      <div class="project-grid">
+        {#each $projects as project (project.ID)}
+          <ProjectCard {project} on:view={(e) => openProject(e.detail)} />
+        {/each}
+      </div>
+    {/if}
   {/if}
 
   {#if $agentLog.length > 0 || $activeRun}

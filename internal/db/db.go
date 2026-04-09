@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -260,3 +261,103 @@ type ProjectSummary struct {
 	TotalTasks   int
 	DoneTasks    int
 }
+
+// ProjectDetail is a full project view including tasks, brief, and stats.
+type ProjectDetail struct {
+	ID           string       `json:"id"`
+	Name         string       `json:"name"`
+	Path         string       `json:"path"`
+	Lifecycle    string       `json:"lifecycle"`
+	CurrentStage string       `json:"current_stage"`
+	CurrentEpoch string       `json:"current_epoch"`
+	TotalTasks   int          `json:"total_tasks"`
+	DoneTasks    int          `json:"done_tasks"`
+	Brief        string       `json:"brief"`
+	Objective    string       `json:"objective"`
+	Tasks        []TaskInfo   `json:"tasks"`
+	Stats        ProjectStats `json:"stats"`
+}
+
+// TaskInfo is a task summary for the project detail view.
+type TaskInfo struct {
+	ID        string `json:"id"`
+	Title     string `json:"title"`
+	Status    string `json:"status"`
+	Priority  string `json:"priority"`
+	OwnerRole string `json:"owner_role"`
+}
+
+// ProjectStats aggregates token and cost data for a project.
+type ProjectStats struct {
+	TotalRuns         int     `json:"total_runs"`
+	TotalInputTokens  int     `json:"total_input_tokens"`
+	TotalOutputTokens int     `json:"total_output_tokens"`
+	TotalCostUSD      float64 `json:"total_cost_usd"`
+	TotalToolCalls    int     `json:"total_tool_calls"`
+}
+
+// GetProjectDetail returns full project info including tasks, brief, and token stats.
+func (db *DB) GetProjectDetail(projectID string) (*ProjectDetail, error) {
+	var detail ProjectDetail
+	var pathStr sql.NullString
+	var epoch sql.NullString
+
+	err := db.conn.QueryRow(`
+		SELECT id, path, name, lifecycle, current_stage, current_epoch FROM projects WHERE id = ?`,
+		projectID,
+	).Scan(&detail.ID, &pathStr, &detail.Name, &detail.Lifecycle, &detail.CurrentStage, &epoch)
+	if err != nil {
+		return nil, fmt.Errorf("project not found: %s", projectID)
+	}
+	detail.Path = pathStr.String
+	detail.CurrentEpoch = epoch.String
+
+	// Read brief from project files on disk
+	if detail.Path != "" {
+		briefData, err := os.ReadFile(detail.Path + "/docs/project-brief.md")
+		if err == nil {
+			brief := string(briefData)
+			detail.Brief = brief
+			// Extract objective section
+			if idx := strings.Index(brief, "## Objective"); idx >= 0 {
+				rest := brief[idx+len("## Objective"):]
+				if end := strings.Index(rest, "\n##"); end >= 0 {
+					detail.Objective = strings.TrimSpace(rest[:end])
+				} else {
+					detail.Objective = strings.TrimSpace(rest)
+				}
+			}
+		}
+	}
+
+	// Tasks
+	rows, err := db.conn.Query(`
+		SELECT id, title, status, priority, owner_role FROM tasks WHERE project_id = ? ORDER BY id`,
+		projectID,
+	)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var t TaskInfo
+			rows.Scan(&t.ID, &t.Title, &t.Status, &t.Priority, &t.OwnerRole)
+			detail.Tasks = append(detail.Tasks, t)
+		}
+	}
+	detail.TotalTasks = len(detail.Tasks)
+	for _, t := range detail.Tasks {
+		if t.Status == "done" || t.Status == "archived" {
+			detail.DoneTasks++
+		}
+	}
+
+	// Stats from runs
+	db.conn.QueryRow(`
+		SELECT COALESCE(COUNT(*), 0), COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0),
+			COALESCE(SUM(cost_usd), 0), COALESCE(SUM(tool_calls), 0)
+		FROM runs WHERE project_id = ?`, projectID,
+	).Scan(&detail.Stats.TotalRuns, &detail.Stats.TotalInputTokens,
+		&detail.Stats.TotalOutputTokens, &detail.Stats.TotalCostUSD, &detail.Stats.TotalToolCalls)
+
+	return &detail, nil
+}
+
