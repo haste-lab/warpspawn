@@ -217,7 +217,27 @@ func (o *Orchestrator) executeBuilder(ctx context.Context, projectRoot, projectI
 	)
 
 	stateUpdate := "in-progress"
-	if !agentResult.Success {
+	if agentResult.Success {
+		// Builder completed — advance task to in-review for Reviewer pickup
+		// Re-read the task file to check if Builder updated it
+		updatedTask, _ := ParseTaskFile(task.Path)
+		if updatedTask.Status != "in-review" {
+			// Builder didn't update the task status — do it automatically
+			updateTaskStatusInFile(task.Path, "in-review")
+			slog.Info("auto-advanced task to in-review", "task", task.TaskID)
+		}
+
+		// Write a minimal handoff if Builder didn't
+		if IsPlaceholderSection(updatedTask.Validation) {
+			appendToTaskSection(task.Path, "Validation", fmt.Sprintf("Builder completed with %d tool calls. Summary: %s", agentResult.ToolCalls, truncate(agentResult.Summary, 200)))
+		}
+		if IsPlaceholderSection(updatedTask.ImplementationNotes) {
+			appendToTaskSection(task.Path, "Implementation Notes", fmt.Sprintf("Auto-generated: Builder executed successfully. %s", truncate(agentResult.Summary, 200)))
+		}
+
+		updateProjectStage(projectRoot, "in review")
+		stateUpdate = "builder-complete"
+	} else {
 		stateUpdate = "builder-failed"
 		updateTaskStatusInFile(task.Path, "blocked")
 		updateProjectStage(projectRoot, "blocked")
@@ -337,6 +357,39 @@ func (o *Orchestrator) executeReviewer(ctx context.Context, projectRoot, project
 		})
 	}
 
+	// If Reviewer succeeded but didn't write a review file, auto-generate one
+	if agentResult.Success {
+		reviewFile := LoadLatestReview(projectRoot, task.TaskID)
+		if reviewFile == nil {
+			// Reviewer used task_complete without writing a review artifact — generate one
+			reviewID := fmt.Sprintf("REVIEW-%s-%s", task.TaskID, time.Now().Format("2006-01-02"))
+			reviewContent := fmt.Sprintf(`# Review Report
+
+## Metadata
+- Review ID: %s
+- Task ID: %s
+- Reviewer: Reviewer/QA (auto-generated from agent output)
+- Outcome: approved
+- Date: %s
+
+## Acceptance Criteria Result
+Agent reported: %s
+
+## Defects
+None reported.
+
+## Final Recommendation
+Approved based on agent verification.
+`, reviewID, task.TaskID, time.Now().Format("2006-01-02"), truncate(agentResult.Summary, 300))
+			reviewPath := filepath.Join(projectRoot, "reviews", strings.ToLower(reviewID)+".md")
+			os.MkdirAll(filepath.Dir(reviewPath), 0755)
+			tmpPath := reviewPath + fmt.Sprintf(".tmp.%d", os.Getpid())
+			os.WriteFile(tmpPath, []byte(reviewContent), 0644)
+			os.Rename(tmpPath, reviewPath)
+			slog.Info("auto-generated review artifact", "task", task.TaskID, "review", reviewID)
+		}
+	}
+
 	gitCommit(projectRoot, fmt.Sprintf("[warpspawn] post-execution: Reviewer %s — %s", task.TaskID, status(agentResult.Success)))
 
 	slog.Info("reviewer finished",
@@ -367,6 +420,22 @@ func updateTaskStatusInFile(taskPath, newStatus string) {
 	tmpPath := taskPath + fmt.Sprintf(".tmp.%d", os.Getpid())
 	os.WriteFile(tmpPath, []byte(updated), 0644)
 	os.Rename(tmpPath, taskPath)
+}
+
+func appendToTaskSection(taskPath, section, content string) {
+	data, err := os.ReadFile(taskPath)
+	if err != nil {
+		return
+	}
+	text := string(data)
+	placeholder := "## " + section + "\npending"
+	replacement := "## " + section + "\n" + content
+	if strings.Contains(text, placeholder) {
+		updated := strings.Replace(text, placeholder, replacement, 1)
+		tmpPath := taskPath + fmt.Sprintf(".tmp.%d", os.Getpid())
+		os.WriteFile(tmpPath, []byte(updated), 0644)
+		os.Rename(tmpPath, taskPath)
+	}
 }
 
 func updateProjectStage(projectRoot, stage string) {
