@@ -11,10 +11,14 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"syscall"
 
+	"github.com/haste-lab/warpspawn/internal/agent"
 	"github.com/haste-lab/warpspawn/internal/config"
+	"github.com/haste-lab/warpspawn/internal/core"
 	"github.com/haste-lab/warpspawn/internal/db"
+	"github.com/haste-lab/warpspawn/internal/guard"
 	"github.com/haste-lab/warpspawn/internal/provider"
 	"github.com/haste-lab/warpspawn/internal/server"
 )
@@ -22,32 +26,181 @@ import (
 var version = "dev"
 
 func main() {
-	debug := flag.Bool("debug", false, "Enable debug logging")
-	showVersion := flag.Bool("version", false, "Print version and exit")
-	port := flag.Int("port", 9320, "HTTP server port")
-	noBrowser := flag.Bool("no-browser", false, "Don't open browser on startup")
-	host := flag.String("host", "127.0.0.1", "Bind address (use 0.0.0.0 for LAN access)")
-	flag.Parse()
-
-	if *showVersion {
-		fmt.Printf("warpspawn %s\n", version)
-		os.Exit(0)
+	if len(os.Args) > 1 && os.Args[1] == "run" {
+		runCmd(os.Args[2:])
+		return
 	}
+	serveCmd(os.Args[1:])
+}
 
-	// Configure logging
+// runCmd handles: warpspawn run <project-path> [--provider ollama] [--model qwen2.5-coder:7b]
+func runCmd(args []string) {
+	fs := flag.NewFlagSet("run", flag.ExitOnError)
+	debug := fs.Bool("debug", false, "Enable debug logging")
+	providerName := fs.String("provider", "ollama", "LLM provider (ollama, openai, anthropic)")
+	model := fs.String("model", "", "Model to use (default: auto from config)")
+	fs.Parse(args)
+
+	if fs.NArg() < 1 {
+		fmt.Fprintf(os.Stderr, "Usage: warpspawn run <project-path> [--provider ollama] [--model qwen3:8b]\n")
+		os.Exit(1)
+	}
+	projectRoot, _ := filepath.Abs(fs.Arg(0))
+
 	logLevel := slog.LevelInfo
 	if *debug {
 		logLevel = slog.LevelDebug
 	}
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})))
 
-	// Paths
+	paths := config.DefaultPaths()
+	os.MkdirAll(paths.DataDir, 0755)
+
+	cfg, _ := config.Load(paths.ConfigDir)
+
+	database, err := db.Open(paths.DataDir)
+	if err != nil {
+		slog.Error("failed to open database", "error", err)
+		os.Exit(1)
+	}
+	defer database.Close()
+
+	// Resolve provider
+	var llmProvider provider.Provider
+	switch *providerName {
+	case "ollama":
+		baseURL := cfg.Providers["ollama"].BaseURL
+		if baseURL == "" {
+			baseURL = "http://localhost:11434"
+		}
+		llmProvider = provider.NewOllamaProvider(baseURL)
+	case "openai":
+		apiKey := os.Getenv("OPENAI_API_KEY")
+		if apiKey == "" {
+			fmt.Fprintf(os.Stderr, "Error: OPENAI_API_KEY not set\n")
+			os.Exit(1)
+		}
+		llmProvider = provider.NewOpenAIProvider(apiKey)
+	case "anthropic":
+		apiKey := os.Getenv("ANTHROPIC_API_KEY")
+		if apiKey == "" {
+			fmt.Fprintf(os.Stderr, "Error: ANTHROPIC_API_KEY not set\n")
+			os.Exit(1)
+		}
+		llmProvider = provider.NewAnthropicProvider(apiKey)
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown provider: %s\n", *providerName)
+		os.Exit(1)
+	}
+
+	// Health check
+	if err := llmProvider.HealthCheck(context.Background()); err != nil {
+		fmt.Fprintf(os.Stderr, "Provider %s not reachable: %v\n", *providerName, err)
+		os.Exit(1)
+	}
+
+	// Resolve model
+	if *model == "" {
+		// Use config defaults
+		roleCfg := cfg.Roles["builder"]
+		if roleCfg.Model != "" {
+			*model = roleCfg.Model
+		} else {
+			*model = "qwen2.5-coder:7b"
+		}
+	}
+
+	budget := guard.NewBudget(paths.DataDir)
+	workflow := core.DefaultWorkflow
+
+	orch := &core.Orchestrator{
+		Workflow:  &workflow,
+		Provider:  llmProvider,
+		DB:        database,
+		Budget:    budget,
+		MaxTools:  cfg.Execution.MaxToolCalls,
+		TimeoutS:  cfg.Execution.AgentTimeoutS,
+		OnEvent: func(event agent.StreamEvent) {
+			switch event.Type {
+			case "text":
+				fmt.Print(event.Text)
+			case "tool_call":
+				if event.ToolCall != nil {
+					fmt.Fprintf(os.Stderr, "\n[tool] %s\n", event.ToolCall.Name)
+				}
+			case "tool_result":
+				if event.ToolResult != nil {
+					output := event.ToolResult.Content
+					if len(output) > 200 {
+						output = output[:200] + "..."
+					}
+					fmt.Fprintf(os.Stderr, "[result] %s\n", strings.ReplaceAll(output, "\n", " "))
+				}
+			case "complete":
+				fmt.Fprintf(os.Stderr, "\n[complete] %s\n", event.Summary)
+			case "error":
+				fmt.Fprintf(os.Stderr, "\n[error] %v\n", event.Error)
+			}
+		},
+	}
+
+	_ = model // TODO: pass model to orchestrator for provider model selection
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Handle Ctrl+C
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigCh
+		fmt.Fprintf(os.Stderr, "\nAborting...\n")
+		cancel()
+	}()
+
+	result := orch.RunProject(ctx, projectRoot)
+
+	fmt.Fprintf(os.Stderr, "\n--- Result ---\n")
+	fmt.Fprintf(os.Stderr, "Project:  %s\n", result.ProjectID)
+	fmt.Fprintf(os.Stderr, "Action:   %s\n", result.Action.Kind)
+	fmt.Fprintf(os.Stderr, "State:    %s\n", result.StateUpdate)
+	if result.AgentResult != nil {
+		fmt.Fprintf(os.Stderr, "Tools:    %d calls\n", result.AgentResult.ToolCalls)
+		fmt.Fprintf(os.Stderr, "Tokens:   %d in / %d out\n", result.AgentResult.TotalUsage.InputTokens, result.AgentResult.TotalUsage.OutputTokens)
+		fmt.Fprintf(os.Stderr, "Success:  %v\n", result.AgentResult.Success)
+	}
+	if result.Error != nil {
+		fmt.Fprintf(os.Stderr, "Error:    %v\n", result.Error)
+		os.Exit(1)
+	}
+}
+
+// serveCmd handles the default: start the HTTP server
+func serveCmd(args []string) {
+	fs := flag.NewFlagSet("serve", flag.ExitOnError)
+	debug := fs.Bool("debug", false, "Enable debug logging")
+	showVersion := fs.Bool("version", false, "Print version and exit")
+	port := fs.Int("port", 9320, "HTTP server port")
+	noBrowser := fs.Bool("no-browser", false, "Don't open browser on startup")
+	host := fs.String("host", "127.0.0.1", "Bind address (use 0.0.0.0 for LAN access)")
+	fs.Parse(args)
+
+	if *showVersion {
+		fmt.Printf("warpspawn %s\n", version)
+		os.Exit(0)
+	}
+
+	logLevel := slog.LevelInfo
+	if *debug {
+		logLevel = slog.LevelDebug
+	}
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})))
+
 	paths := config.DefaultPaths()
 	os.MkdirAll(paths.ConfigDir, 0755)
 	os.MkdirAll(paths.DataDir, 0755)
 	os.MkdirAll(paths.ProjectDir, 0755)
 
-	// Check PID file for multi-instance prevention
 	pidPath := filepath.Join(paths.DataDir, "warpspawn.pid")
 	if err := checkPidFile(pidPath); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -56,14 +209,12 @@ func main() {
 	writePidFile(pidPath)
 	defer os.Remove(pidPath)
 
-	// Load config
 	cfg, err := config.Load(paths.ConfigDir)
 	if err != nil {
 		slog.Error("failed to load config", "error", err)
 		os.Exit(1)
 	}
 
-	// Open database
 	database, err := db.Open(paths.DataDir)
 	if err != nil {
 		slog.Error("failed to open database", "error", err)
@@ -72,7 +223,6 @@ func main() {
 	defer database.Close()
 	database.Backup()
 
-	// Check Ollama
 	ollama := provider.NewOllamaProvider(cfg.Providers["ollama"].BaseURL)
 	if err := ollama.HealthCheck(context.Background()); err != nil {
 		slog.Warn("Ollama not reachable", "error", err)
@@ -81,17 +231,13 @@ func main() {
 		slog.Info("Ollama connected", "models", len(models))
 	}
 
-	// Generate session token
 	token := config.GenerateSessionToken()
 
-	// Warn if binding to all interfaces
 	if *host == "0.0.0.0" {
 		slog.Warn("Server accessible on all network interfaces. API token required for all requests.")
 	}
+	_ = host
 
-	_ = host // TODO: pass to server for non-localhost binding
-
-	// Start HTTP server
 	srv := server.New(*port, token, database, cfg)
 	actualPort, shutdown, err := srv.Start(context.Background())
 	if err != nil {
@@ -102,7 +248,6 @@ func main() {
 
 	url := fmt.Sprintf("http://localhost:%d?token=%s", actualPort, token)
 
-	// Print banner
 	fmt.Printf(`
  __      __
  \ \    / /_ _ _ _ _ __ ___ _ __  __ ___ __ ___ _
@@ -113,7 +258,6 @@ func main() {
   Server:  %s
 `, version, url)
 
-	// Open browser
 	if !*noBrowser {
 		if err := openBrowser(url); err != nil {
 			fmt.Printf("  Browser: could not open automatically.\n")
@@ -125,7 +269,6 @@ func main() {
 
 	fmt.Printf("\n  Press Ctrl+C to stop.\n\n")
 
-	// Wait for shutdown signal
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	sig := <-sigCh
@@ -148,25 +291,19 @@ func openBrowser(url string) error {
 func checkPidFile(pidPath string) error {
 	data, err := os.ReadFile(pidPath)
 	if err != nil {
-		return nil // no PID file — OK
+		return nil
 	}
-
 	pid, err := strconv.Atoi(string(data))
 	if err != nil {
-		return nil // corrupt PID file — overwrite
+		return nil
 	}
-
-	// Check if the process is still running
 	process, err := os.FindProcess(pid)
 	if err != nil {
 		return nil
 	}
-
-	// On Unix, FindProcess always succeeds. Send signal 0 to check.
 	if err := process.Signal(syscall.Signal(0)); err != nil {
-		return nil // process not running — stale PID file
+		return nil
 	}
-
 	return fmt.Errorf("Warpspawn already running (PID %d). If this is wrong, delete %s", pid, pidPath)
 }
 

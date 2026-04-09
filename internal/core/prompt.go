@@ -1,10 +1,8 @@
-package agent
+package core
 
 import (
 	"fmt"
 	"strings"
-
-	"github.com/haste-lab/warpspawn/internal/core"
 )
 
 // RoleCapabilities defines what a role can and cannot edit.
@@ -44,7 +42,7 @@ type ModelTierConfig struct {
 }
 
 // InferModelTier determines the appropriate model tier from task properties.
-func InferModelTier(task *core.Task) ModelTierConfig {
+func InferModelTier(task *Task) ModelTierConfig {
 	// Explicit override
 	if task.ModelTier == "light" {
 		return ModelTierConfig{AgentID: "builder-light", Label: "Builder (light)"}
@@ -73,7 +71,7 @@ func InferModelTier(task *core.Task) ModelTierConfig {
 }
 
 // BuildBuilderPrompt creates a lean prompt for the Builder role.
-func BuildBuilderPrompt(task *core.Task) (system string, user string) {
+func BuildBuilderPrompt(task *Task) (system string, user string) {
 	caps := DefaultRoleCapabilities["builder"]
 
 	system = "You are Builder, an autonomous agent that implements software tasks. " +
@@ -95,7 +93,7 @@ func BuildBuilderPrompt(task *core.Task) (system string, user string) {
 }
 
 // BuildReviewerPrompt creates a lean prompt for the Reviewer/QA role.
-func BuildReviewerPrompt(task *core.Task) (system string, user string) {
+func BuildReviewerPrompt(task *Task) (system string, user string) {
 	caps := DefaultRoleCapabilities["reviewer-qa"]
 
 	system = "You are Reviewer/QA, an autonomous agent that validates completed work. " +
