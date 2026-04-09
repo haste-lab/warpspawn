@@ -318,10 +318,12 @@ func (o *Orchestrator) manageInFlight(ctx context.Context, projectRoot, projectI
 		return o.executeReviewer(ctx, projectRoot, projectID, action)
 	}
 
-	// Handle rework tasks — reset to ready-for-build
+	// Handle rework tasks — reset to ready-for-build and remove stale review
 	if task.Status == "rework" {
 		slog.Info("task in rework, resetting to ready-for-build", "task", task.TaskID)
 		updateTaskStatusInFile(task.Path, "ready-for-build")
+		// Remove the old review so the Reviewer starts fresh after rebuild
+		removeReviewsForTask(projectRoot, task.TaskID)
 		return OrchestratorResult{ProjectRoot: projectRoot, ProjectID: projectID, Action: action, StateUpdate: "rework-reset"}
 	}
 
@@ -491,6 +493,27 @@ func updateProjectStage(projectRoot, stage string) {
 		updated := strings.Replace(text, "- Current Stage: "+current, "- Current Stage: "+stage, 1)
 		if err := atomicWrite(statePath, []byte(updated)); err != nil {
 			slog.Error("failed to update project stage", "path", statePath, "error", err)
+		}
+	}
+}
+
+// SetTaskBlocked marks a task as blocked in its file.
+func SetTaskBlocked(taskPath string) {
+	updateTaskStatusInFile(taskPath, "blocked")
+}
+
+// removeReviewsForTask deletes review files for a task so the Reviewer starts fresh after rework.
+func removeReviewsForTask(projectRoot, taskID string) {
+	reviewsDir := filepath.Join(projectRoot, "reviews")
+	entries, err := os.ReadDir(reviewsDir)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if strings.Contains(strings.ToUpper(name), strings.ToUpper(taskID)) && strings.HasSuffix(name, ".md") && name != "README.md" {
+			os.Remove(filepath.Join(reviewsDir, name))
+			slog.Debug("removed stale review", "file", name, "task", taskID)
 		}
 	}
 }

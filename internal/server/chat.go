@@ -709,6 +709,8 @@ func (s *Server) runBuildLoop(ctx context.Context, cancel context.CancelFunc, pr
 
 	maxCycles := 50
 	stuckCount := 0
+	taskRetries := make(map[string]int) // track how many times each task has been retried
+	const maxTaskRetries = 3
 	for cycle := 1; cycle <= maxCycles; cycle++ {
 		select {
 		case <-ctx.Done():
@@ -768,10 +770,21 @@ func (s *Server) runBuildLoop(ctx context.Context, cancel context.CancelFunc, pr
 		switch result.StateUpdate {
 		case "done":
 			addMCMessage(milestone)
+			delete(taskRetries, taskID) // clear retries on success
 		case "builder-failed":
 			addMCMessage(milestone + "\n\nYou can reply here to discuss the issue or click Start Building to retry.")
 		case "budget-exhausted":
 			addMCMessage(milestone)
+		case "rework-reset":
+			taskRetries[taskID]++
+			if taskRetries[taskID] >= maxTaskRetries {
+				addMCMessage(fmt.Sprintf("⚠️ %s has been retried %d times without success. Skipping — the task may need a different approach or a more capable model.", taskID, maxTaskRetries))
+				// Mark as blocked so it's skipped
+				if result.Action.Task != nil {
+					core.SetTaskBlocked(result.Action.Task.Path)
+				}
+				continue
+			}
 		}
 
 		if result.Action.Kind == "no-action" {
