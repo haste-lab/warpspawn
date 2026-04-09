@@ -102,19 +102,39 @@
   }
 
   async function startBuild() {
+    loading = true;
     try {
-      const resp = await fetch(`/api/project/${projectId}/build`, {
+      // Step 1: Approve the plan (create tasks) if not already approved
+      if (phase === 'plan-review') {
+        const approveResp = await fetch(`/api/project/${projectId}/chat`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${sessionStorage.getItem('ws_token') || ''}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ message: 'Approved.' }),
+        });
+        if (!approveResp.ok) throw new Error(await approveResp.text());
+        const approveData = await approveResp.json();
+        messages = approveData.messages || messages;
+        phase = approveData.phase || phase;
+      }
+
+      // Step 2: Start the build
+      const buildResp = await fetch(`/api/project/${projectId}/build`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${sessionStorage.getItem('ws_token') || ''}`,
           'Content-Type': 'application/json',
         },
       });
-      if (!resp.ok) throw new Error(await resp.text());
-      addNotification('success', 'Build started');
+      if (!buildResp.ok) throw new Error(await buildResp.text());
+      addNotification('success', 'Plan approved and build started');
       dispatch('build-started');
     } catch (e: any) {
       addNotification('error', `Failed to start build: ${e.message}`);
+    } finally {
+      loading = false;
     }
   }
 </script>

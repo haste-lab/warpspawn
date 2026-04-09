@@ -83,6 +83,42 @@ func (s *Server) handleProjectChat(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	// Pick model for MC role
+	model := s.cfg.Roles["mission-control"].Model
+	if model == "" {
+		model = "qwen3:8b"
+	}
+
+	// Check if user is approving the plan — handle without LLM call
+	if req.Message != "" && chat.Phase == "plan-review" {
+		lower := strings.ToLower(req.Message)
+		if lower == "go" || lower == "approve" || lower == "approved" || lower == "start" ||
+			lower == "yes" || lower == "y" || lower == "ok" ||
+			strings.Contains(lower, "looks good") || strings.Contains(lower, "start building") ||
+			strings.Contains(lower, "approve") {
+
+			chat.Phase = "approved"
+			taskCount := s.createTasksFromPlan(projectID, projectRoot, chat)
+
+			replyText := fmt.Sprintf("Plan approved. Created %d tasks. Click **Start Building** to begin autonomous execution.", taskCount)
+			chat.Messages = append(chat.Messages, ChatMessage{
+				Role:      "assistant",
+				Content:   replyText,
+				Timestamp: time.Now().UnixMilli(),
+			})
+			saveChat(projectRoot, chat)
+
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(chatResponse{
+				Reply:    replyText,
+				Phase:    chat.Phase,
+				Model:    model,
+				Messages: chat.Messages,
+			})
+			return
+		}
+	}
+
 	// Build LLM messages
 	llmMessages := buildShapingMessages(chat, brief)
 
@@ -91,12 +127,6 @@ func (s *Server) handleProjectChat(w http.ResponseWriter, r *http.Request) {
 	if prov == nil {
 		http.Error(w, "no LLM provider available", http.StatusServiceUnavailable)
 		return
-	}
-
-	// Pick model for MC role
-	model := s.cfg.Roles["mission-control"].Model
-	if model == "" {
-		model = "qwen3:8b" // fallback
 	}
 
 	// Call LLM
@@ -123,18 +153,6 @@ func (s *Server) handleProjectChat(w http.ResponseWriter, r *http.Request) {
 	// Check if MC produced a plan (contains task headings)
 	if strings.Contains(replyText, "TASK-") || strings.Contains(replyText, "## Plan") || strings.Contains(replyText, "## Tasks") {
 		chat.Phase = "plan-review"
-	}
-
-	// Check if user approved
-	if req.Message != "" {
-		lower := strings.ToLower(req.Message)
-		if (lower == "go" || lower == "approve" || lower == "start" || lower == "yes" ||
-			strings.Contains(lower, "looks good") || strings.Contains(lower, "start building")) &&
-			chat.Phase == "plan-review" {
-			chat.Phase = "approved"
-			// Trigger task creation from the plan
-			s.createTasksFromPlan(projectID, projectRoot, chat)
-		}
 	}
 
 	// Add assistant reply
@@ -226,7 +244,7 @@ func (s *Server) pickProvider() provider.Provider {
 	return nil
 }
 
-func (s *Server) createTasksFromPlan(projectID, projectRoot string, chat *ProjectChat) {
+func (s *Server) createTasksFromPlan(projectID, projectRoot string, chat *ProjectChat) int {
 	// Find the last assistant message containing the plan
 	var planText string
 	for i := len(chat.Messages) - 1; i >= 0; i-- {
@@ -237,7 +255,7 @@ func (s *Server) createTasksFromPlan(projectID, projectRoot string, chat *Projec
 		}
 	}
 	if planText == "" {
-		return
+		return 0
 	}
 
 	// Parse task lines: "TASK-XXX: Title — description" or "N. Title — description"
@@ -326,6 +344,7 @@ pending
 	initGit(projectRoot) // re-commit with new tasks
 
 	slog.Info("created tasks from plan", "project", projectID, "tasks", taskNum)
+	return taskNum
 }
 
 func isTaskLine(line string) bool {
