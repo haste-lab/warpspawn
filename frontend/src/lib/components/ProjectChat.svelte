@@ -30,6 +30,7 @@
   let started = existingMessages != null && existingMessages.length > 0;
   let buildRunning = false;
   let buildCompleted = false;
+  let buildTriggered = false;
 
   // Detect build completion from agent log
   const unsubLog = agentLog.subscribe((log) => {
@@ -142,6 +143,7 @@
       if (!buildResp.ok) throw new Error(await buildResp.text());
       buildRunning = true;
       buildCompleted = false;
+      buildTriggered = true;
       addNotification('success', 'Build started — agents are working autonomously');
       dispatch('build-started');
     } catch (e: any) {
@@ -165,7 +167,7 @@
       <span class="badge badge-blue"><span class="pulse-dot-inline"></span> Building...</span>
     {:else if buildCompleted}
       <span class="badge badge-green">Build complete</span>
-    {:else if phase === 'approved' || phase === 'plan-review'}
+    {:else if (phase === 'approved' || phase === 'plan-review') && !buildTriggered}
       <button class="btn btn-primary btn-sm" on:click={startBuild} disabled={loading}>
         {loading ? 'Starting...' : 'Start Building →'}
       </button>

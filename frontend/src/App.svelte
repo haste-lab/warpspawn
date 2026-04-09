@@ -1,7 +1,7 @@
 <script lang="ts">
   import './lib/theme.css';
   import { onMount } from 'svelte';
-  import { settings, projects, budget, setupState, showWizard, currentView, notifications, dismissNotification } from './lib/stores/app';
+  import { settings, projects, budget, setupState, showWizard, currentView, selectedProjectId, notifications, dismissNotification } from './lib/stores/app';
   import { getHealth, getProjects, getBudget, getSettings, connectEvents } from './lib/api';
   import { handleSSEEvent } from './lib/stores/app';
   import Dashboard from './lib/components/Dashboard.svelte';
@@ -41,6 +41,9 @@
   function handleNav(view: 'dashboard' | 'settings') {
     currentView.set(view);
     showWizard.set(false);
+    if (view === 'dashboard') {
+      selectedProjectId.set(null); // close any open project
+    }
   }
 </script>
 

@@ -591,8 +591,8 @@ func (s *Server) handleStartBuild(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Run orchestrator with tracking
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	// Run orchestrator with tracking — no overall timeout (per-task timeout is enforced by the orchestrator)
+	ctx, cancel := context.WithCancel(context.Background())
 	activeBuilds[projectID] = cancel
 	buildMu.Unlock()
 
@@ -629,23 +629,31 @@ func (s *Server) handleStartBuild(w http.ResponseWriter, r *http.Request) {
 			},
 		}
 
+		// Helper to add MC messages to chat during build
+		addMCMessage := func(text string) {
+			chatMu.Lock()
+			chat := getOrCreateChat(projectID, "quick")
+			chat.Messages = append(chat.Messages, ChatMessage{
+				Role:      "assistant",
+				Content:   text,
+				Timestamp: time.Now().UnixMilli(),
+			})
+			saveChat(projectRoot, chat)
+			chatMu.Unlock()
+		}
+
+		addMCMessage("🚀 Build started. I'll report progress as tasks complete.")
+
 		// Build loop: keep running cycles until no more actionable work
 		maxCycles := 50 // safety cap
 		for cycle := 1; cycle <= maxCycles; cycle++ {
 			select {
 			case <-ctx.Done():
+				addMCMessage("⚠️ Build was cancelled.")
 				s.Broadcast(SSEEvent{Type: "build.cancelled", Data: map[string]interface{}{"project_id": projectID}})
 				return
 			default:
 			}
-
-			s.Broadcast(SSEEvent{
-				Type: "build.cycle",
-				Data: map[string]interface{}{
-					"project_id": projectID,
-					"cycle":      cycle,
-				},
-			})
 
 			result := orch.RunProject(ctx, projectRoot)
 
@@ -688,6 +696,16 @@ func (s *Server) handleStartBuild(w http.ResponseWriter, r *http.Request) {
 				},
 			})
 
+			// Add MC chat messages for key milestones
+			switch result.StateUpdate {
+			case "done":
+				addMCMessage(milestone)
+			case "builder-failed":
+				addMCMessage(milestone + "\n\nYou can reply here to discuss the issue or click Start Building to retry.")
+			case "budget-exhausted":
+				addMCMessage(milestone)
+			}
+
 			// Stop conditions
 			if result.Action.Kind == "no-action" {
 				break
@@ -721,6 +739,8 @@ func (s *Server) handleStartBuild(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		summary += "\nFiles persist on disk — they stay when Warpspawn is closed."
+
+		addMCMessage(summary)
 
 		s.Broadcast(SSEEvent{
 			Type: "build.complete",

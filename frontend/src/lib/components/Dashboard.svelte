@@ -1,8 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { projects, budget, activeRun, agentLog, canAct, settings, addNotification } from '../stores/app';
+  import { projects, canAct, settings, addNotification, selectedProjectId } from '../stores/app';
   import { createProject, getProjects } from '../api';
-  import AgentPanel from './AgentPanel.svelte';
   import ProjectCard from './ProjectCard.svelte';
   import ProjectDetail from './ProjectDetail.svelte';
 
@@ -16,7 +15,6 @@
   let newProjectBrief = '';
   let newProjectName = '';
   let creating = false;
-  let viewingProjectId: string | null = null;
 
   let modelStrategy: 'defaults' | 'custom' = 'defaults';
   let availableModels: ModelOption[] = [];
@@ -83,7 +81,7 @@
       projects.set(updated);
 
       // Open the new project
-      viewingProjectId = result.id;
+      selectedProjectId.set(result.id);
 
       showNewProject = false;
       newProjectBrief = '';
@@ -97,13 +95,13 @@
   }
 
   function openProject(id: string) {
-    viewingProjectId = id;
+    selectedProjectId.set(id);
   }
 </script>
 
 <div class="dashboard">
-  {#if viewingProjectId}
-    <ProjectDetail projectId={viewingProjectId} on:back={() => viewingProjectId = null} />
+  {#if $selectedProjectId}
+    <ProjectDetail projectId={$selectedProjectId} on:back={() => selectedProjectId.set(null)} />
   {:else}
     <div class="dashboard-header">
       <h1>Projects</h1>
@@ -201,11 +199,6 @@
     {/if}
   {/if}
 
-  {#if $agentLog.length > 0 || $activeRun}
-    <div class="mt-4">
-      <AgentPanel />
-    </div>
-  {/if}
 </div>
 
 <style>
