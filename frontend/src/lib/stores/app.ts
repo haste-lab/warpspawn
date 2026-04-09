@@ -49,8 +49,16 @@ export interface Notification {
 }
 
 let notifId = 0;
+const CRITICAL_TYPES = new Set(['error', 'warning']);
+
 export function addNotification(type: Notification['type'], message: string, dismissable = true) {
-  notifications.update(n => [...n, { id: ++notifId, type, message, timestamp: Date.now(), dismissable }]);
+  const id = ++notifId;
+  notifications.update(n => [...n, { id, type, message, timestamp: Date.now(), dismissable }]);
+
+  // Auto-dismiss after 5s unless critical (error/warning)
+  if (!CRITICAL_TYPES.has(type)) {
+    setTimeout(() => dismissNotification(id), 5000);
+  }
 }
 export function dismissNotification(id: number) {
   notifications.update(n => n.filter(x => x.id !== id));

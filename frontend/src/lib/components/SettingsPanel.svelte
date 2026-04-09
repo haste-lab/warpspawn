@@ -32,6 +32,16 @@
     return `${provider}/${model}`;
   }
 
+  async function handleProviderToggle(name: string, enabled: boolean) {
+    if (!$settings) return;
+    const updated = { ...$settings };
+    updated.providers = { ...updated.providers };
+    updated.providers[name] = { ...updated.providers[name], enabled };
+    if (await saveSettings(updated)) {
+      addNotification('success', `${name} ${enabled ? 'enabled' : 'disabled'}`);
+    }
+  }
+
   async function saveSettings(updated: typeof $settings) {
     if (!updated) return;
     saving = true;
@@ -169,7 +179,7 @@
                 {/if}
               </div>
               <label class="toggle">
-                <input type="checkbox" checked={config.enabled} on:change={() => {/* TODO */}} />
+                <input type="checkbox" checked={config.enabled} on:change={() => handleProviderToggle(name, !config.enabled)} />
                 <span class="toggle-slider"></span>
               </label>
             </div>
@@ -367,6 +377,30 @@
     </section>
 
     <section class="settings-section">
+      <h2>LLM Context Window</h2>
+      <p class="text-muted text-sm mb-2">Controls how much text the model can process at once. Larger context = better results but more VRAM usage. This only affects local Ollama models — cloud providers manage context automatically.</p>
+      <div class="card">
+        <div class="settings-row">
+          <div>
+            <label>Context size (tokens)</label>
+            <p class="text-xs text-dim">Recommended: 8192 for 4GB VRAM, 16384 for 8GB, 32768 for 16GB+</p>
+          </div>
+          <select value={$settings.execution.llm_context_size || 16384} style="max-width: 140px"
+            on:change={(e) => handleExecutionChange('llm_context_size', parseInt(e.currentTarget.value))}>
+            <option value="4096">4,096 (minimal)</option>
+            <option value="8192">8,192 (4GB VRAM)</option>
+            <option value="16384">16,384 (8GB VRAM)</option>
+            <option value="32768">32,768 (16GB VRAM)</option>
+            <option value="65536">65,536 (24GB+ VRAM)</option>
+          </select>
+        </div>
+      </div>
+      <div class="hint-card card">
+        <p class="text-xs text-muted"><strong>Why this matters:</strong> If context is too small, the model can't see the full task description and forgets what it already did. This leads to empty files, repeated errors, and hallucinated responses. If you see poor build results, try increasing this value.</p>
+      </div>
+    </section>
+
+    <section class="settings-section">
       <h2>Budget</h2>
       <div class="card">
         <div class="settings-row">
@@ -514,6 +548,10 @@
     margin-top: 4px;
     line-height: 1.6;
     word-break: break-all;
+  }
+  .hint-card {
+    background: var(--blue-dim);
+    border-color: rgba(90, 182, 255, 0.1);
   }
   .text-amber { color: var(--amber); }
   .text-red { color: var(--red); }

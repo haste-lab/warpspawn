@@ -87,7 +87,7 @@ export interface AppSettings {
   providers: Record<string, ProviderConfig>;
   roles: Record<string, RoleConfig>;
   budget: { daily_limit_usd: number };
-  execution: { max_tool_calls: number; agent_timeout_s: number; shell_mode: string };
+  execution: { max_tool_calls: number; agent_timeout_s: number; shell_mode: string; llm_context_size: number };
 }
 
 export interface ProviderConfig {

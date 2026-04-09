@@ -41,7 +41,8 @@ type BudgetConfig struct {
 type ExecutionConfig struct {
 	MaxToolCalls   int    `json:"max_tool_calls"`
 	AgentTimeoutS  int    `json:"agent_timeout_s"`
-	ShellMode      string `json:"shell_mode"` // unrestricted, restricted, approval
+	ShellMode      string `json:"shell_mode"`  // unrestricted, restricted, approval
+	LLMContextSize int    `json:"llm_context_size"` // num_ctx sent to Ollama
 }
 
 // DefaultConfig returns sensible defaults.
@@ -63,9 +64,10 @@ func DefaultConfig() Config {
 		},
 		Budget: BudgetConfig{DailyLimitUSD: 10.0},
 		Execution: ExecutionConfig{
-			MaxToolCalls:  30,
-			AgentTimeoutS: 240,
-			ShellMode:     "restricted",
+			MaxToolCalls:   30,
+			AgentTimeoutS:  240,
+			ShellMode:      "restricted",
+			LLMContextSize: 16384,
 		},
 	}
 }
@@ -145,6 +147,12 @@ func ValidateConfig(cfg Config) Config {
 	validModes := map[string]bool{"unrestricted": true, "restricted": true, "approval": true}
 	if !validModes[cfg.Execution.ShellMode] {
 		cfg.Execution.ShellMode = "restricted"
+	}
+	if cfg.Execution.LLMContextSize < 2048 {
+		cfg.Execution.LLMContextSize = 16384
+	}
+	if cfg.Execution.LLMContextSize > 131072 {
+		cfg.Execution.LLMContextSize = 131072
 	}
 	return cfg
 }

@@ -296,6 +296,7 @@ type ProjectDetail struct {
 	Objective    string       `json:"objective"`
 	Tasks        []TaskInfo   `json:"tasks"`
 	Stats        ProjectStats `json:"stats"`
+	AppFiles     []string     `json:"app_files"`
 }
 
 // TaskInfo is a task summary for the project detail view.
@@ -377,6 +378,19 @@ func (db *DB) GetProjectDetail(projectID string) (*ProjectDetail, error) {
 		FROM runs WHERE project_id = ?`, projectID,
 	).Scan(&detail.Stats.TotalRuns, &detail.Stats.TotalInputTokens,
 		&detail.Stats.TotalOutputTokens, &detail.Stats.TotalCostUSD, &detail.Stats.TotalToolCalls)
+
+	// List app files
+	appDir := filepath.Join(detail.Path, "app")
+	filepath.Walk(appDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		if info.Size() > 0 {
+			rel, _ := filepath.Rel(detail.Path, path)
+			detail.AppFiles = append(detail.AppFiles, rel)
+		}
+		return nil
+	})
 
 	return &detail, nil
 }

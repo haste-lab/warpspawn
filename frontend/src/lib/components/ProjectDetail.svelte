@@ -149,6 +149,11 @@
     return { icon: '·', cls: 'pending' };
   }
 
+  function openFolder(path: string) {
+    // Call a backend endpoint or just show the path
+    addNotification('info', `Project folder: ${path}`);
+  }
+
   function formatTokens(n: number): string {
     if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
     if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K';
@@ -266,12 +271,55 @@
           </div>
         {/if}
 
+        <!-- Files + Actions -->
+        <div class="card">
+          <div class="flex justify-between items-center mb-2">
+            <h3>Project Files</h3>
+            {#if detail.path}
+              <button class="btn btn-sm" on:click={() => openFolder(detail.path)}>Open Folder</button>
+            {/if}
+          </div>
+          {#if detail.stats.total_runs > 0}
+            <div class="file-list">
+              {#each (detail as any).app_files || [] as file}
+                <div class="file-row">
+                  <span class="mono text-xs">{file}</span>
+                </div>
+              {/each}
+              {#if !((detail as any).app_files?.length > 0)}
+                <p class="text-xs text-dim">No application files created. The builder may need a more capable model or larger context window.</p>
+              {/if}
+            </div>
+          {:else}
+            <p class="text-xs text-dim">Build hasn't run yet.</p>
+          {/if}
+        </div>
+
         <!-- Brief (collapsible) -->
         {#if detail.brief}
           <details class="card brief-section">
             <summary><h3>Project Brief</h3></summary>
             <pre class="brief-content">{detail.brief}</pre>
           </details>
+        {/if}
+      </div>
+    </div>
+
+    <!-- Activity Log -->
+    <div class="card activity-log">
+      <h3 class="mb-2">Activity Log</h3>
+      <div class="log-entries">
+        {#each $agentLog as entry (entry.id)}
+          <div class="activity-row">
+            <span class="activity-time">{new Date(entry.timestamp).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', second: '2-digit'})}</span>
+            <span class="activity-icon" class:done={entry.type === 'complete'} class:error={entry.type === 'error'} class:tool={entry.type === 'tool_call' || entry.type === 'tool_result'}>
+              {entry.type === 'complete' ? '✓' : entry.type === 'error' ? '✗' : entry.type === 'tool_call' ? '▸' : entry.type === 'tool_result' ? '◂' : '·'}
+            </span>
+            <span class="activity-text">{entry.content}</span>
+          </div>
+        {/each}
+        {#if $agentLog.length === 0}
+          <p class="text-xs text-dim">No activity yet. Start a build to see progress here.</p>
         {/if}
       </div>
     </div>
@@ -518,5 +566,57 @@
   }
   .mode-btn:hover { border-color: rgba(255, 255, 255, 0.12); }
   .mode-btn.active { border-color: rgba(114, 230, 184, 0.3); background: var(--bg-elevated); }
+  .file-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .file-row {
+    padding: 3px 8px;
+    background: var(--bg);
+    border-radius: 3px;
+  }
+
+  .activity-log {
+    max-height: 300px;
+    overflow-y: auto;
+  }
+  .log-entries {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .activity-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    font-size: 0.8rem;
+    padding: 3px 0;
+  }
+  .activity-time {
+    color: var(--text-dim);
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    flex-shrink: 0;
+    min-width: 65px;
+  }
+  .activity-icon {
+    flex-shrink: 0;
+    width: 14px;
+    text-align: center;
+    font-weight: 700;
+    font-size: 0.75rem;
+    color: var(--text-dim);
+  }
+  .activity-icon.done { color: var(--green); }
+  .activity-icon.error { color: var(--red); }
+  .activity-icon.tool { color: var(--blue); }
+  .activity-text {
+    color: var(--text-muted);
+    white-space: pre-wrap;
+    word-break: break-word;
+    line-height: 1.4;
+  }
+
   .mb-2 { margin-bottom: 8px; }
 </style>

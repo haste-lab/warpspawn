@@ -55,6 +55,7 @@ type CompletionOptions struct {
 	MaxTokens   int
 	Temperature float64
 	Tools       []ToolDef
+	ContextSize int // num_ctx for Ollama (0 = use provider default)
 }
 
 // ModelInfo describes an available model.
