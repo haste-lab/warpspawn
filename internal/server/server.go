@@ -12,15 +12,18 @@ import (
 
 	"github.com/haste-lab/warpspawn/internal/config"
 	"github.com/haste-lab/warpspawn/internal/db"
+	"github.com/haste-lab/warpspawn/internal/provider"
 )
 
 // Server is the HTTP server for the Warpspawn UI and API.
 type Server struct {
-	token    string
-	port     int
-	db       *db.DB
-	cfg      config.Config
-	mux      *http.ServeMux
+	token      string
+	port       int
+	db         *db.DB
+	cfg        config.Config
+	configDir  string
+	providers  map[string]provider.Provider
+	mux        *http.ServeMux
 	sseClients map[chan SSEEvent]bool
 	sseMu      sync.RWMutex
 }
@@ -32,12 +35,14 @@ type SSEEvent struct {
 }
 
 // New creates a new server instance.
-func New(port int, token string, database *db.DB, cfg config.Config) *Server {
+func New(port int, token string, database *db.DB, cfg config.Config, configDir string, providers map[string]provider.Provider) *Server {
 	s := &Server{
 		token:      token,
 		port:       port,
 		db:         database,
 		cfg:        cfg,
+		configDir:  configDir,
+		providers:  providers,
 		mux:        http.NewServeMux(),
 		sseClients: make(map[chan SSEEvent]bool),
 	}
@@ -53,8 +58,10 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/budget", s.auth(s.handleBudget))
 	s.mux.HandleFunc("GET /api/events", s.auth(s.handleSSE))
 
-	// API endpoint for settings (needed by frontend)
+	// Settings and configuration
 	s.mux.HandleFunc("GET /api/settings", s.auth(s.handleSettings))
+	s.mux.HandleFunc("PUT /api/settings", s.auth(s.handleUpdateSettings))
+	s.mux.HandleFunc("GET /api/models", s.auth(s.handleListModels))
 
 	// Serve embedded frontend (no auth on static assets — token checked on API calls)
 	s.mux.Handle("/", frontendHandler())
@@ -170,6 +177,51 @@ func (s *Server) Broadcast(event SSEEvent) {
 func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(s.cfg)
+}
+
+func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
+	var updated config.Config
+	if err := json.NewDecoder(r.Body).Decode(&updated); err != nil {
+		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	// Preserve version
+	updated.ConfigVersion = s.cfg.ConfigVersion
+	if err := config.Save(s.configDir, updated); err != nil {
+		http.Error(w, "failed to save: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.cfg = updated
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(s.cfg)
+}
+
+func (s *Server) handleListModels(w http.ResponseWriter, r *http.Request) {
+	type modelEntry struct {
+		Provider string `json:"provider"`
+		ID       string `json:"id"`
+		Name     string `json:"name"`
+	}
+
+	var allModels []modelEntry
+
+	for name, prov := range s.providers {
+		models, err := prov.ListModels(r.Context())
+		if err != nil {
+			slog.Debug("failed to list models for provider", "provider", name, "error", err)
+			continue
+		}
+		for _, m := range models {
+			allModels = append(allModels, modelEntry{
+				Provider: name,
+				ID:       m.ID,
+				Name:     m.Name,
+			})
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(allModels)
 }
 
 func (s *Server) handleProjectDetail(w http.ResponseWriter, r *http.Request) {

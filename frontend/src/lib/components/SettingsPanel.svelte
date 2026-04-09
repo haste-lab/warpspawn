@@ -1,5 +1,60 @@
 <script lang="ts">
-  import { settings, showWizard } from '../stores/app';
+  import { onMount } from 'svelte';
+  import { settings, showWizard, addNotification } from '../stores/app';
+  import { updateSettings } from '../api';
+
+  interface ModelOption {
+    provider: string;
+    id: string;
+    name: string;
+  }
+
+  let availableModels: ModelOption[] = [];
+  let saving = false;
+
+  onMount(async () => {
+    try {
+      const resp = await fetch('/api/models', {
+        headers: { 'Authorization': `Bearer ${sessionStorage.getItem('ws_token') || ''}` }
+      });
+      if (resp.ok) {
+        availableModels = await resp.json();
+      }
+    } catch { /* ignore */ }
+  });
+
+  function modelOptions(currentProvider: string): ModelOption[] {
+    // Show all available models, grouped by provider
+    return availableModels;
+  }
+
+  function modelDisplayName(provider: string, model: string): string {
+    return `${provider}/${model}`;
+  }
+
+  async function handleRoleModelChange(role: string, value: string) {
+    if (!$settings) return;
+    // value format: "provider/model"
+    const slashIdx = value.indexOf('/');
+    if (slashIdx < 0) return;
+    const provider = value.substring(0, slashIdx);
+    const model = value.substring(slashIdx + 1);
+
+    const updated = { ...$settings };
+    updated.roles = { ...updated.roles };
+    updated.roles[role] = { provider, model };
+
+    saving = true;
+    try {
+      const result = await updateSettings(updated);
+      settings.set(result);
+      addNotification('success', `Updated ${role} → ${provider}/${model}`);
+    } catch (e: any) {
+      addNotification('error', `Failed to save: ${e.message}`);
+    } finally {
+      saving = false;
+    }
+  }
 
   interface RoleInfo {
     label: string;
@@ -133,12 +188,26 @@
             </div>
 
             <div class="role-model">
-              <div class="model-select">
-                <span class="detail-label">Current model</span>
-                <div class="flex gap-2 items-center">
-                  <span class="badge badge-dim">{config.provider}</span>
-                  <span class="mono text-sm">{config.model}</span>
-                </div>
+              <div class="model-select-row">
+                <span class="detail-label">Model</span>
+                {#if availableModels.length > 0}
+                  <select
+                    class="model-dropdown"
+                    value="{config.provider}/{config.model}"
+                    on:change={(e) => handleRoleModelChange(role, e.currentTarget.value)}
+                    disabled={saving}
+                  >
+                    {#each availableModels as m}
+                      <option value="{m.provider}/{m.id}">{m.provider}/{m.id}</option>
+                    {/each}
+                  </select>
+                {:else}
+                  <div class="flex gap-2 items-center">
+                    <span class="badge badge-dim">{config.provider}</span>
+                    <span class="mono text-sm">{config.model}</span>
+                    <span class="text-xs text-dim">(no providers connected — models unavailable)</span>
+                  </div>
+                {/if}
               </div>
             </div>
           </div>
@@ -284,10 +353,20 @@
     justify-content: space-between;
     align-items: center;
   }
-  .model-select {
+  .model-select-row {
     display: flex;
-    flex-direction: column;
-    gap: 4px;
+    align-items: center;
+    gap: 10px;
+  }
+  .model-select-row .detail-label {
+    flex-shrink: 0;
+    min-width: 45px;
+  }
+  .model-dropdown {
+    flex: 1;
+    max-width: 300px;
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
   }
   .settings-row {
     display: flex;

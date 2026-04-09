@@ -223,12 +223,26 @@ func serveCmd(args []string) {
 	defer database.Close()
 	database.Backup()
 
-	ollama := provider.NewOllamaProvider(cfg.Providers["ollama"].BaseURL)
+	// Build provider map for the server
+	providers := make(map[string]provider.Provider)
+	ollamaURL := cfg.Providers["ollama"].BaseURL
+	if ollamaURL == "" {
+		ollamaURL = "http://localhost:11434"
+	}
+	ollama := provider.NewOllamaProvider(ollamaURL)
 	if err := ollama.HealthCheck(context.Background()); err != nil {
 		slog.Warn("Ollama not reachable", "error", err)
 	} else {
 		models, _ := ollama.ListModels(context.Background())
 		slog.Info("Ollama connected", "models", len(models))
+		providers["ollama"] = ollama
+	}
+	// Cloud providers are added if API keys are available (from env for now)
+	if key := os.Getenv("OPENAI_API_KEY"); key != "" {
+		providers["openai"] = provider.NewOpenAIProvider(key)
+	}
+	if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
+		providers["anthropic"] = provider.NewAnthropicProvider(key)
 	}
 
 	token := config.GenerateSessionToken()
@@ -238,7 +252,7 @@ func serveCmd(args []string) {
 	}
 	_ = host
 
-	srv := server.New(*port, token, database, cfg)
+	srv := server.New(*port, token, database, cfg, paths.ConfigDir, providers)
 	actualPort, shutdown, err := srv.Start(context.Background())
 	if err != nil {
 		slog.Error("failed to start server", "error", err)
