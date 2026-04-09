@@ -1,6 +1,21 @@
 <script lang="ts">
-  import { agentLog, activeRun } from '../stores/app';
+  import { agentLog, activeRun, addNotification } from '../stores/app';
   import { afterUpdate } from 'svelte';
+
+  async function abortRun() {
+    if (!$activeRun) return;
+    try {
+      const resp = await fetch('/api/run/abort', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ project_id: $activeRun.projectId }),
+      });
+      if (resp.ok) {
+        addNotification('warning', 'Build abort requested');
+      }
+    } catch { /* ignore */ }
+  }
 
   let logContainer: HTMLDivElement;
   let autoScroll = true;
@@ -32,7 +47,7 @@
     </div>
     <div class="flex gap-2">
       {#if $activeRun}
-        <button class="btn btn-danger btn-sm">Abort</button>
+        <button class="btn btn-danger btn-sm" on:click={abortRun}>Abort</button>
       {/if}
       <button class="btn btn-sm" on:click={() => agentLog.set([])}>Clear</button>
     </div>

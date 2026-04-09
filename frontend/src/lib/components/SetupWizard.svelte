@@ -2,6 +2,7 @@
   import { createEventDispatcher } from 'svelte';
   import { settings } from '../stores/app';
   import { testProvider, updateSettings } from '../api';
+  import type { AppSettings } from '../api';
 
   const dispatch = createEventDispatcher();
 
@@ -71,8 +72,34 @@
 
   async function finish() {
     saving = true;
-    // In a real implementation, this would call updateSettings
-    dispatch('complete');
+    try {
+      const updated: Record<string, unknown> = {
+        config_version: 1,
+        providers: {
+          ollama: { enabled: ollamaStatus === 'ok', base_url: ollamaUrl },
+          openai: { enabled: openaiStatus === 'ok', key_ref: 'keyring:warpspawn/openai' },
+          anthropic: { enabled: anthropicStatus === 'ok', key_ref: 'keyring:warpspawn/anthropic' },
+        },
+        roles: {
+          'mission-control': { provider: builderProvider, model: reviewerModel || builderModel || 'qwen3:8b' },
+          'architect': { provider: builderProvider, model: reviewerModel || builderModel || 'qwen3:8b' },
+          'ux': { provider: builderProvider, model: reviewerModel || builderModel || 'qwen3:8b' },
+          'builder': { provider: builderProvider, model: builderModel || 'qwen2.5-coder:7b' },
+          'builder-light': { provider: builderProvider, model: builderModel || 'qwen2.5-coder:7b' },
+          'reviewer-qa': { provider: builderProvider, model: reviewerModel || builderModel || 'qwen3:8b' },
+        },
+        budget: { daily_limit_usd: dailyLimit },
+        execution: { max_tool_calls: 30, agent_timeout_s: 240, shell_mode: 'restricted' },
+      };
+
+      const result = await updateSettings(updated as any);
+      settings.set(result);
+      dispatch('complete');
+    } catch (e: any) {
+      alert('Failed to save settings: ' + e.message);
+    } finally {
+      saving = false;
+    }
   }
 </script>
 

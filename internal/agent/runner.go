@@ -164,11 +164,12 @@ func Run(ctx context.Context, cfg RunConfig) RunResult {
 		{Role: "user", Content: userPrompt},
 	}
 
-	// Build tool execution config
+	// Build tool execution config — passes parent context for cancellation
 	toolCfg := ExecuteConfig{
 		ProjectRoot:    cfg.ProjectRoot,
 		CommandTimeout: cfg.CommandTimeout,
 		ShellMode:      cfg.ShellMode,
+		Ctx:            ctx,
 	}
 
 	tools := BuiltinTools()
@@ -188,6 +189,21 @@ func Run(ctx context.Context, cfg RunConfig) RunResult {
 				TotalUsage: totalUsage,
 				Error:      fmt.Errorf("max tool calls exceeded"),
 			}
+		}
+
+		// Prune conversation history to stay within context limits
+		// Keep: system message (0), initial user message (1), last 10 message pairs
+		if len(messages) > 22 {
+			pruned := make([]provider.Message, 0, 22)
+			pruned = append(pruned, messages[0]) // system
+			pruned = append(pruned, messages[1]) // initial user prompt
+			pruned = append(pruned, provider.Message{
+				Role:    "user",
+				Content: fmt.Sprintf("[%d earlier messages pruned to fit context window]", len(messages)-22),
+			})
+			pruned = append(pruned, messages[len(messages)-19:]...) // last ~10 exchanges
+			messages = pruned
+			slog.Debug("pruned conversation history", "original", len(messages)+len(messages)-22, "pruned_to", len(messages))
 		}
 
 		// Call LLM

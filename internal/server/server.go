@@ -72,6 +72,8 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/settings", s.auth(s.handleSettings))
 	s.mux.HandleFunc("PUT /api/settings", s.auth(s.handleUpdateSettings))
 	s.mux.HandleFunc("GET /api/models", s.auth(s.handleListModels))
+	s.mux.HandleFunc("POST /api/provider/test", s.auth(s.handleTestProvider))
+	s.mux.HandleFunc("POST /api/run/abort", s.auth(s.handleAbortRun))
 
 	// Token-to-cookie exchange: browser opens URL with ?token=..., gets a cookie, then redirected to clean URL
 	s.mux.HandleFunc("GET /auth", s.handleAuth)
@@ -267,6 +269,64 @@ func (s *Server) handleListModels(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(allModels)
+}
+
+func (s *Server) handleTestProvider(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Provider string `json:"provider"`
+		BaseURL  string `json:"base_url"`
+		APIKey   string `json:"api_key"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	var prov provider.Provider
+	switch req.Provider {
+	case "ollama":
+		url := req.BaseURL
+		if url == "" {
+			url = "http://localhost:11434"
+		}
+		prov = provider.NewOllamaProvider(url)
+	case "openai":
+		if req.APIKey == "" {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": "API key required"})
+			return
+		}
+		prov = provider.NewOpenAIProvider(req.APIKey)
+	case "anthropic":
+		if req.APIKey == "" {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": "API key required"})
+			return
+		}
+		prov = provider.NewAnthropicProvider(req.APIKey)
+	default:
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": "unknown provider: " + req.Provider})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	if err := prov.HealthCheck(ctx); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": err.Error()})
+		return
+	}
+
+	models, _ := prov.ListModels(ctx)
+	modelNames := make([]string, len(models))
+	for i, m := range models {
+		modelNames[i] = m.ID
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "models": modelNames})
 }
 
 func (s *Server) handleProjectDetail(w http.ResponseWriter, r *http.Request) {

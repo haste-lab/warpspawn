@@ -464,6 +464,31 @@ func saveChat(projectRoot string, chat *ProjectChat) {
 	chatSessions[chat.ProjectID] = chat
 }
 
+func (s *Server) handleAbortRun(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ProjectID string `json:"project_id"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	buildMu.Lock()
+	cancel, ok := activeBuilds[req.ProjectID]
+	buildMu.Unlock()
+
+	if !ok {
+		http.Error(w, "no active build for this project", http.StatusNotFound)
+		return
+	}
+
+	cancel()
+	slog.Info("build aborted by user", "project", req.ProjectID)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "aborted", "project_id": req.ProjectID})
+}
+
 func min(a, b int) int {
 	if a < b {
 		return a

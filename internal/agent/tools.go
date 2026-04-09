@@ -88,6 +88,11 @@ func ValidateCommand(command string, args []string, mode ShellMode) error {
 			return fmt.Errorf("blocked: %s with -c/-e flag not allowed in restricted mode (can execute arbitrary code)", baseName)
 		}
 
+		// Block dangerous package manager subcommands that can execute arbitrary code/network
+		if err := validatePackageManagerArgs(baseName, args); err != nil {
+			return err
+		}
+
 		// Validate arguments for filesystem commands — block access outside project directory
 		if isFilesystemCommand(baseName) {
 			for _, arg := range args {
@@ -98,6 +103,62 @@ func ValidateCommand(command string, args []string, mode ShellMode) error {
 		}
 	}
 
+	return nil
+}
+
+// validatePackageManagerArgs blocks dangerous subcommands on allowed build tools.
+// npm exec, pip install (from URL), go run (remote), make (with LLM-written Makefile) can all
+// execute arbitrary code including network operations.
+func validatePackageManagerArgs(baseName string, args []string) error {
+	switch baseName {
+	case "npm", "npx":
+		// Allow: npm install, npm test, npm run <script>, npm start
+		// Block: npm exec, npx <arbitrary-package> (can download and run anything)
+		for _, arg := range args {
+			if arg == "exec" || arg == "x" {
+				return fmt.Errorf("blocked: npm exec/npx can execute arbitrary packages from the internet")
+			}
+		}
+		// npx as command is allowed only for known safe tools
+		if baseName == "npx" {
+			if len(args) > 0 {
+				safe := map[string]bool{"svelte-check": true, "vite": true, "tsc": true, "jest": true, "vitest": true, "eslint": true, "prettier": true}
+				if !safe[args[0]] {
+					return fmt.Errorf("blocked: npx %s not in safe list (can download arbitrary packages)", args[0])
+				}
+			}
+		}
+	case "pip", "pip3":
+		// Allow: pip install <package-name> (from PyPI)
+		// Block: pip install from URLs, git repos, or local paths with setup.py
+		for _, arg := range args {
+			if strings.HasPrefix(arg, "http://") || strings.HasPrefix(arg, "https://") ||
+				strings.HasPrefix(arg, "git+") || strings.HasPrefix(arg, "/") {
+				return fmt.Errorf("blocked: pip install from URL/git not allowed in restricted mode")
+			}
+		}
+	case "go":
+		// Allow: go build, go test, go mod tidy, go fmt
+		// Block: go run (can fetch remote modules), go install (same)
+		for _, arg := range args {
+			if arg == "run" || arg == "install" || arg == "get" {
+				return fmt.Errorf("blocked: go %s can fetch and execute remote code", arg)
+			}
+		}
+	case "cargo":
+		// Allow: cargo build, cargo test, cargo fmt, cargo check
+		// Block: cargo install (fetches from crates.io)
+		for _, arg := range args {
+			if arg == "install" {
+				return fmt.Errorf("blocked: cargo install can fetch and execute remote code")
+			}
+		}
+	case "make":
+		// make executes whatever is in the Makefile — if the LLM wrote it, it's untrusted
+		// Allow make only if a Makefile already existed before the agent ran
+		// For now, block make entirely in restricted mode — it's too powerful
+		return fmt.Errorf("blocked: make can execute arbitrary shell commands via Makefile (use specific commands instead)")
+	}
 	return nil
 }
 
@@ -259,6 +320,7 @@ type ExecuteConfig struct {
 	ProjectRoot    string
 	CommandTimeout time.Duration
 	ShellMode      ShellMode
+	Ctx            context.Context // parent context for cancellation
 }
 
 // ExecuteTool runs a tool call and returns the result.
@@ -285,7 +347,7 @@ func ExecuteTool(cfg ExecuteConfig, call provider.ToolCall) ToolResult {
 	case "list_files":
 		return executeListFiles(projectRoot, call.ID, args)
 	case "run_command":
-		return executeRunCommand(projectRoot, call.ID, args, commandTimeout, cfg.ShellMode)
+		return executeRunCommand(projectRoot, call.ID, args, commandTimeout, cfg.ShellMode, cfg.Ctx)
 	case "task_complete":
 		summary, _ := args["summary"].(string)
 		return ToolResult{
@@ -367,7 +429,7 @@ func executeListFiles(projectRoot, callID string, args map[string]interface{}) T
 	return ToolResult{ToolCallID: callID, Content: strings.Join(lines, "\n")}
 }
 
-func executeRunCommand(projectRoot, callID string, args map[string]interface{}, timeout time.Duration, shellMode ShellMode) ToolResult {
+func executeRunCommand(projectRoot, callID string, args map[string]interface{}, timeout time.Duration, shellMode ShellMode, parentCtx context.Context) ToolResult {
 	command, _ := args["command"].(string)
 	if command == "" {
 		return ToolResult{ToolCallID: callID, Content: "Error: empty command", Error: fmt.Errorf("empty command")}
@@ -388,7 +450,10 @@ func executeRunCommand(projectRoot, callID string, args map[string]interface{}, 
 	}
 
 	// Execute with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	if parentCtx == nil {
+		parentCtx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parentCtx, timeout)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, command, cmdArgs...)
@@ -415,6 +480,7 @@ func executeRunCommand(projectRoot, callID string, args map[string]interface{}, 
 }
 
 // safePath resolves a relative path against the project root and ensures it doesn't escape.
+// It resolves symlinks to prevent symlink-based directory escape.
 func safePath(projectRoot, relPath string) (string, error) {
 	if relPath == "" {
 		return "", fmt.Errorf("empty file path")
@@ -426,10 +492,32 @@ func safePath(projectRoot, relPath string) (string, error) {
 		return "", fmt.Errorf("invalid path: %w", err)
 	}
 
-	// Ensure the resolved path is within the project root
 	absRoot, _ := filepath.Abs(projectRoot)
+
+	// Check the logical path first (before the file exists)
 	if !strings.HasPrefix(absPath, absRoot+string(filepath.Separator)) && absPath != absRoot {
 		return "", fmt.Errorf("path %q escapes project directory", relPath)
+	}
+
+	// If the file exists, resolve symlinks and re-check
+	realPath, err := filepath.EvalSymlinks(absPath)
+	if err == nil {
+		// File exists — verify the real path is still inside the project root
+		realRoot, _ := filepath.EvalSymlinks(absRoot)
+		if !strings.HasPrefix(realPath, realRoot+string(filepath.Separator)) && realPath != realRoot {
+			return "", fmt.Errorf("path %q resolves to %q which is outside project directory (symlink escape)", relPath, realPath)
+		}
+		return realPath, nil
+	}
+
+	// File doesn't exist yet (write_file creating a new file) — check parent directory
+	parentDir := filepath.Dir(absPath)
+	realParent, err := filepath.EvalSymlinks(parentDir)
+	if err == nil {
+		realRoot, _ := filepath.EvalSymlinks(absRoot)
+		if !strings.HasPrefix(realParent, realRoot+string(filepath.Separator)) && realParent != realRoot {
+			return "", fmt.Errorf("parent directory of %q resolves outside project directory (symlink escape)", relPath)
+		}
 	}
 
 	return absPath, nil
