@@ -188,15 +188,22 @@ func ListTasks(projectRoot string) []Task {
 	}
 
 	var tasks []Task
+	seen := make(map[string]bool) // dedup by task ID (case-insensitive)
 	for _, entry := range entries {
 		name := entry.Name()
-		if !strings.HasSuffix(name, ".md") || name == "README.md" {
+		if !strings.HasSuffix(name, ".md") || strings.EqualFold(name, "README.md") {
 			continue
 		}
 		task, err := ParseTaskFile(filepath.Join(tasksDir, name))
 		if err != nil {
 			continue
 		}
+		// Skip duplicate task IDs (case-insensitive) — keep the first one found
+		idKey := strings.ToLower(task.TaskID)
+		if seen[idKey] {
+			continue
+		}
+		seen[idKey] = true
 		tasks = append(tasks, task)
 	}
 

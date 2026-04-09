@@ -218,9 +218,9 @@
         on:keydown={handleKeydown}
         placeholder={phase === 'plan-review' ? 'Approve, request changes, or ask questions...' : 'Type a message...'}
         rows="2"
-        disabled={loading || phase === 'approved'}
+        disabled={loading}
       ></textarea>
-      <button class="btn btn-primary" on:click={sendMessage} disabled={!input.trim() || loading || phase === 'approved'}>
+      <button class="btn btn-primary" on:click={sendMessage} disabled={!input.trim() || loading}>
         Send
       </button>
     </div>

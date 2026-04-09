@@ -555,14 +555,42 @@ func (s *Server) handleStartBuild(w http.ResponseWriter, r *http.Request) {
 
 			result := orch.RunProject(ctx, projectRoot)
 
+			// Build milestone reporting
+			taskName := ""
+			taskID := ""
+			if result.Action.Task != nil {
+				taskName = result.Action.Task.Title
+				taskID = result.Action.Task.TaskID
+			}
+
+			var milestone string
+			switch result.StateUpdate {
+			case "builder-complete":
+				milestone = fmt.Sprintf("✅ Builder completed %s: %s", taskID, taskName)
+			case "review-complete":
+				milestone = fmt.Sprintf("✅ Reviewer finished %s: %s", taskID, taskName)
+			case "done":
+				milestone = fmt.Sprintf("🎉 %s closed: %s", taskID, taskName)
+			case "builder-failed":
+				milestone = fmt.Sprintf("❌ Builder failed on %s: %s", taskID, taskName)
+			case "budget-exhausted":
+				milestone = "⚠️ Daily budget exhausted — build paused"
+			case "in-flight":
+				milestone = fmt.Sprintf("🔄 Processing %s: %s", taskID, taskName)
+			default:
+				milestone = fmt.Sprintf("Cycle %d: %s → %s", cycle, result.Action.Kind, result.StateUpdate)
+			}
+
 			s.Broadcast(SSEEvent{
-				Type: "build.progress",
+				Type: "build.milestone",
 				Data: map[string]interface{}{
 					"project_id": projectID,
 					"cycle":      cycle,
 					"action":     result.Action.Kind,
 					"state":      result.StateUpdate,
-					"task":       result.Action.Task != nil,
+					"task_id":    taskID,
+					"task_name":  taskName,
+					"milestone":  milestone,
 				},
 			})
 

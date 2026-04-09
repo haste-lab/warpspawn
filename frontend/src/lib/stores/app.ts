@@ -65,40 +65,57 @@ export function appendLog(type: AgentLogEntry['type'], content: string) {
   });
 }
 
-// Handle SSE events
+// Handle SSE events — only log meaningful milestones, not raw streaming tokens
 export function handleSSEEvent(event: SSEEvent) {
   const d = event.data as Record<string, unknown>;
 
   switch (event.type) {
+    // Agent streaming — DON'T log raw text tokens (they're unreadable character-by-character)
     case 'agent.text':
     case 'agent.chunk':
-      if (d?.content) appendLog('text', String(d.content));
+      // Intentionally not logged — too noisy
       break;
     case 'agent.tool_call':
     case 'agent.tool':
-      if (d?.content) appendLog('tool_call', String(d.content));
+      // Log tool calls with clean formatting
+      if (d?.content) {
+        try {
+          const parsed = JSON.parse(String(d.content));
+          if (parsed.name) {
+            appendLog('tool_call', `${parsed.name}(${summarizeArgs(parsed.arguments)})`);
+          }
+        } catch {
+          appendLog('tool_call', String(d.content).substring(0, 100));
+        }
+      }
       break;
     case 'agent.tool_result':
-      if (d?.content) appendLog('tool_result', String(d.content));
+      if (d?.content) {
+        const content = String(d.content);
+        appendLog('tool_result', content.length > 120 ? content.substring(0, 120) + '...' : content);
+      }
       break;
     case 'agent.complete':
-    case 'agent.error':
-      if (d?.summary) appendLog('complete', String(d.summary));
+      if (d?.summary) {
+        const summary = String(d.summary);
+        if (summary.length > 5) appendLog('complete', summary.substring(0, 200));
+      }
       activeRun.set(null);
       break;
-    case 'build.cycle': {
-      const cycle = d?.cycle || '?';
-      appendLog('text', `\n--- Build cycle ${cycle} ---`);
+    case 'agent.error':
+      if (d?.summary) appendLog('error', String(d.summary));
+      activeRun.set(null);
       break;
-    }
-    case 'build.progress': {
-      const action = d?.action || 'unknown';
-      const state = d?.state || '';
-      appendLog('text', `Action: ${action} → ${state}`);
+
+    // Build milestones — these are the primary log entries
+    case 'build.cycle':
+      // Don't log every cycle — milestones are more meaningful
       break;
-    }
+    case 'build.milestone':
+      if (d?.milestone) appendLog('text', String(d.milestone));
+      break;
     case 'build.complete':
-      appendLog('complete', 'Build finished — all cycles complete');
+      appendLog('complete', '🏁 Build finished — all tasks processed');
       activeRun.set(null);
       addNotification('success', 'Build complete');
       break;
@@ -107,12 +124,11 @@ export function handleSSEEvent(event: SSEEvent) {
       activeRun.set(null);
       break;
     case 'build.budget-exhausted':
-      appendLog('error', 'Build paused — daily budget exhausted');
+      appendLog('error', '⚠️ Build paused — daily budget exhausted');
       activeRun.set(null);
       addNotification('warning', 'Budget exhausted — build paused');
       break;
     case 'run.complete':
-      // Legacy single-run event
       break;
     case 'escalation':
       addNotification('warning', `Escalation: ${JSON.stringify(d)}`);
@@ -121,4 +137,21 @@ export function handleSSEEvent(event: SSEEvent) {
       addNotification('error', `Error: ${JSON.stringify(d)}`);
       break;
   }
+}
+
+function summarizeArgs(args: unknown): string {
+  if (!args) return '';
+  if (typeof args === 'string') {
+    try { args = JSON.parse(args); } catch { return args.substring(0, 60); }
+  }
+  const obj = args as Record<string, unknown>;
+  const parts: string[] = [];
+  for (const [k, v] of Object.entries(obj)) {
+    if (k === 'content') {
+      parts.push(`content: ${String(v).length} chars`);
+    } else {
+      parts.push(`${k}: ${String(v).substring(0, 40)}`);
+    }
+  }
+  return parts.join(', ');
 }

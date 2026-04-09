@@ -235,6 +235,20 @@ func (o *Orchestrator) executeBuilder(ctx context.Context, projectRoot, projectI
 			appendToTaskSection(task.Path, "Implementation Notes", fmt.Sprintf("Auto-generated: Builder executed successfully. %s", truncate(agentResult.Summary, 200)))
 		}
 
+		// Post-build validation: check that Builder actually created files with content
+		sourceFiles := task.SourceFiles
+		emptyFiles := 0
+		for _, sf := range sourceFiles {
+			fullPath := filepath.Join(projectRoot, sf)
+			info, err := os.Stat(fullPath)
+			if err != nil || (info != nil && !info.IsDir() && info.Size() == 0) {
+				emptyFiles++
+			}
+		}
+		if emptyFiles > 0 && len(sourceFiles) > 0 {
+			slog.Warn("post-build validation: empty or missing source files", "task", task.TaskID, "empty", emptyFiles, "total", len(sourceFiles))
+		}
+
 		updateProjectStage(projectRoot, "in review")
 		stateUpdate = "builder-complete"
 	} else {
