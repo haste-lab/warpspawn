@@ -125,6 +125,7 @@ type ollamaToolFunction struct {
 type ollamaOptions struct {
 	Temperature float64 `json:"temperature,omitempty"`
 	NumPredict  int     `json:"num_predict,omitempty"`
+	NumCtx      int     `json:"num_ctx,omitempty"`
 }
 
 // ollamaChatResponse is a single streamed response chunk.
@@ -171,14 +172,16 @@ func (o *OllamaProvider) Complete(ctx context.Context, messages []Message, opts 
 		Tools:    ollamaTools,
 	}
 
-	if opts.Temperature > 0 || opts.MaxTokens > 0 {
-		reqBody.Options = &ollamaOptions{}
-		if opts.Temperature > 0 {
-			reqBody.Options.Temperature = opts.Temperature
-		}
-		if opts.MaxTokens > 0 {
-			reqBody.Options.NumPredict = opts.MaxTokens
-		}
+	// Always set num_ctx — Ollama defaults to 2048 if not specified,
+	// which is far too small for agentic tool-use workloads.
+	reqBody.Options = &ollamaOptions{
+		NumCtx: 16384, // 16K context — good balance for 7-8B models
+	}
+	if opts.Temperature > 0 {
+		reqBody.Options.Temperature = opts.Temperature
+	}
+	if opts.MaxTokens > 0 {
+		reqBody.Options.NumPredict = opts.MaxTokens
 	}
 
 	bodyBytes, err := json.Marshal(reqBody)
