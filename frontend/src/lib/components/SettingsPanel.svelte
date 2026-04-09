@@ -1,5 +1,68 @@
 <script lang="ts">
   import { settings, showWizard } from '../stores/app';
+
+  interface RoleInfo {
+    label: string;
+    purpose: string;
+    focus: string;
+    modelHint: string;
+    icon: string;
+  }
+
+  const roleDescriptions: Record<string, RoleInfo> = {
+    'mission-control': {
+      label: 'Mission Control',
+      purpose: 'Orchestrates the entire delivery lifecycle',
+      focus: 'Decomposes briefs into tasks, prioritizes work, routes between roles, closes completed work, escalates blockers',
+      modelHint: 'Needs strong reasoning. Handles planning, not code generation.',
+      icon: '🎛️',
+    },
+    'architect': {
+      label: 'Architect',
+      purpose: 'Defines technical structure and constraints',
+      focus: 'System design, interfaces, data flow, non-functional requirements (performance, security, reliability)',
+      modelHint: 'Text-focused reasoning. Does not generate code. A lighter model usually suffices.',
+      icon: '🏗️',
+    },
+    'ux': {
+      label: 'UX Designer',
+      purpose: 'Defines user journeys and acceptance criteria',
+      focus: 'User flows, interaction rules, empty/error/loading states, accessibility expectations, UI acceptance criteria',
+      modelHint: 'Text-focused shaping. Does not generate code. A lighter model usually suffices.',
+      icon: '✏️',
+    },
+    'builder': {
+      label: 'Builder',
+      purpose: 'Implements code for bounded tasks',
+      focus: 'Writes code, creates files, runs commands, validates implementation. The only role that produces code artifacts.',
+      modelHint: 'Needs strong code generation. Benefits most from a capable model. Highest token consumer.',
+      icon: '🛠️',
+    },
+    'builder-light': {
+      label: 'Builder (Light)',
+      purpose: 'Implements simple, bounded tasks',
+      focus: 'Same as Builder but auto-selected for small tasks (≤2 files, ≤4 criteria, existing code edits)',
+      modelHint: 'A smaller/cheaper model for simple fixes, tweaks, and config changes.',
+      icon: '🔧',
+    },
+    'reviewer-qa': {
+      label: 'Reviewer / QA',
+      purpose: 'Validates completed work against acceptance criteria',
+      focus: 'Inspects changed files, verifies tests pass, checks acceptance criteria, writes review reports. Does NOT implement missing work.',
+      modelHint: 'Needs code reading ability but does not generate code. A lighter model usually suffices.',
+      icon: '✅',
+    },
+  };
+
+  function getRoleInfo(role: string): RoleInfo {
+    return roleDescriptions[role] || {
+      label: role,
+      purpose: 'Custom role',
+      focus: '',
+      modelHint: '',
+      icon: '⚙️',
+    };
+  }
 </script>
 
 <div class="settings">
@@ -39,13 +102,44 @@
     </section>
 
     <section class="settings-section">
-      <h2>Role → Model Assignment</h2>
-      <div class="settings-grid">
+      <div class="section-intro">
+        <h2>Role → Model Assignment</h2>
+        <p class="text-muted text-sm">Each role has a specific purpose. Assign models based on what the role needs — code-generating roles need capable models, while planning/review roles can use lighter ones.</p>
+      </div>
+
+      <div class="role-grid">
         {#each Object.entries($settings.roles) as [role, config]}
-          <div class="card">
-            <div class="flex justify-between items-center">
-              <strong class="text-sm">{role}</strong>
-              <span class="badge badge-dim">{config.provider}/{config.model}</span>
+          {@const info = getRoleInfo(role)}
+          <div class="card role-card">
+            <div class="role-header">
+              <div class="role-identity">
+                <span class="role-icon">{info.icon}</span>
+                <div>
+                  <strong>{info.label}</strong>
+                  <p class="role-purpose">{info.purpose}</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="role-detail">
+              <div class="role-focus">
+                <span class="detail-label">Focus</span>
+                <span class="detail-text">{info.focus}</span>
+              </div>
+              <div class="role-hint">
+                <span class="detail-label">Model guidance</span>
+                <span class="detail-text">{info.modelHint}</span>
+              </div>
+            </div>
+
+            <div class="role-model">
+              <div class="model-select">
+                <span class="detail-label">Current model</span>
+                <div class="flex gap-2 items-center">
+                  <span class="badge badge-dim">{config.provider}</span>
+                  <span class="mono text-sm">{config.model}</span>
+                </div>
+              </div>
             </div>
           </div>
         {/each}
@@ -58,23 +152,23 @@
         <div class="settings-row">
           <div>
             <label>Max tool calls per agent</label>
-            <p class="text-xs text-dim">Hard limit on tool invocations per run</p>
+            <p class="text-xs text-dim">Hard limit on tool invocations per run. Higher = more capable but more expensive.</p>
           </div>
           <input type="number" value={$settings.execution.max_tool_calls} style="max-width: 80px" />
         </div>
         <div class="settings-row">
           <div>
             <label>Agent timeout (seconds)</label>
-            <p class="text-xs text-dim">Max wallclock time per agent run</p>
+            <p class="text-xs text-dim">Max wallclock time per agent run. Prevents runaway token consumption.</p>
           </div>
           <input type="number" value={$settings.execution.agent_timeout_s} style="max-width: 80px" />
         </div>
         <div class="settings-row">
           <div>
             <label>Shell execution mode</label>
-            <p class="text-xs text-dim">Controls what shell commands agents can run</p>
+            <p class="text-xs text-dim">Controls what shell commands agents can run on your machine.</p>
           </div>
-          <select value={$settings.execution.shell_mode} style="max-width: 150px">
+          <select value={$settings.execution.shell_mode} style="max-width: 160px">
             <option value="unrestricted">Unrestricted</option>
             <option value="restricted">Restricted (allowlist)</option>
             <option value="approval">Approval required</option>
@@ -89,7 +183,7 @@
         <div class="settings-row">
           <div>
             <label>Daily limit (USD)</label>
-            <p class="text-xs text-dim">Ollama is free. This only applies to cloud API calls.</p>
+            <p class="text-xs text-dim">Ollama models are free. This limit only applies to cloud API calls (OpenAI, Anthropic).</p>
           </div>
           <div class="flex items-center gap-2">
             <span class="text-muted">$</span>
@@ -108,7 +202,7 @@
     display: flex;
     flex-direction: column;
     gap: 24px;
-    max-width: 700px;
+    max-width: 760px;
   }
   .settings-header {
     display: flex;
@@ -116,12 +210,84 @@
     align-items: center;
   }
   .settings-section h2 {
-    margin-bottom: 10px;
+    margin-bottom: 4px;
+  }
+  .section-intro {
+    margin-bottom: 12px;
+  }
+  .section-intro p {
+    margin-top: 4px;
   }
   .settings-grid {
     display: flex;
     flex-direction: column;
     gap: 8px;
+  }
+  .role-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .role-card {
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .role-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+  }
+  .role-identity {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+  }
+  .role-icon {
+    font-size: 1.3rem;
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+  .role-purpose {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin-top: 2px;
+  }
+  .role-detail {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px 10px;
+    background: var(--bg);
+    border-radius: var(--radius-sm);
+  }
+  .role-focus, .role-hint {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .detail-label {
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .detail-text {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    line-height: 1.4;
+  }
+  .role-model {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .model-select {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
   }
   .settings-row {
     display: flex;
