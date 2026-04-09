@@ -1,9 +1,23 @@
 <script lang="ts">
   import './lib/theme.css';
   import { onMount } from 'svelte';
-  import { settings, projects, budget, setupState, showWizard, currentView, selectedProjectId, notifications, dismissNotification } from './lib/stores/app';
+  import { settings, projects, budget, setupState, showWizard, currentView, selectedProjectId, notifications, dismissNotification, refreshTrigger } from './lib/stores/app';
   import { getHealth, getProjects, getBudget, getSettings, connectEvents } from './lib/api';
   import { handleSSEEvent } from './lib/stores/app';
+  import { onDestroy } from 'svelte';
+
+  // Refresh budget on state changes
+  let budgetTimer: ReturnType<typeof setTimeout> | null = null;
+  const unsubBudget = refreshTrigger.subscribe(() => {
+    if (budgetTimer) clearTimeout(budgetTimer);
+    budgetTimer = setTimeout(async () => {
+      try {
+        const b = await getBudget();
+        if (b) budget.set(b);
+      } catch { /* ignore */ }
+    }, 2000);
+  });
+  onDestroy(() => { unsubBudget(); if (budgetTimer) clearTimeout(budgetTimer); });
   import Dashboard from './lib/components/Dashboard.svelte';
   import SetupWizard from './lib/components/SetupWizard.svelte';
   import SettingsPanel from './lib/components/SettingsPanel.svelte';

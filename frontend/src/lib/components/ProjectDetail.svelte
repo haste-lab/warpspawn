@@ -1,9 +1,8 @@
 <script lang="ts">
   import { createEventDispatcher, onMount, onDestroy } from 'svelte';
   import { getProjectDetail } from '../api';
-  import { addNotification, projects, agentLog } from '../stores/app';
-  import { getProjects, connectEvents } from '../api';
-  import { handleSSEEvent } from '../stores/app';
+  import { addNotification, projects, agentLog, refreshTrigger } from '../stores/app';
+  import { getProjects } from '../api';
   import ProjectChat from './ProjectChat.svelte';
 
   export let projectId: string;
@@ -83,25 +82,22 @@
   $: progressPct = detail && detail.total_tasks > 0 ? (detail.done_tasks / detail.total_tasks) * 100 : 0;
   $: isIntake = detail && (detail.current_stage === 'intake' || detail.current_stage === 'shaping') && detail.total_tasks === 0;
 
-  // Auto-refresh project detail when agent log updates (build in progress)
+  // Auto-refresh project detail when SSE events signal state changes
   let refreshTimer: ReturnType<typeof setTimeout> | null = null;
-  let lastLogCount = 0;
 
-  const unsubLog = agentLog.subscribe((log) => {
-    if (log.length !== lastLogCount) {
-      lastLogCount = log.length;
-      // Debounce: refresh 1s after last log entry (avoid hammering during rapid updates)
-      if (refreshTimer) clearTimeout(refreshTimer);
-      refreshTimer = setTimeout(async () => {
-        try {
-          detail = await getProjectDetail(projectId);
-        } catch { /* ignore refresh errors */ }
-      }, 1500);
-    }
+  const unsubRefresh = refreshTrigger.subscribe(() => {
+    // Debounce: refresh 500ms after last trigger
+    if (refreshTimer) clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(async () => {
+      try {
+        const updated = await getProjectDetail(projectId);
+        if (updated) detail = updated;
+      } catch { /* ignore */ }
+    }, 500);
   });
 
   onDestroy(() => {
-    unsubLog();
+    unsubRefresh();
     if (refreshTimer) clearTimeout(refreshTimer);
   });
 

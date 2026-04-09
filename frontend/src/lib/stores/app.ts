@@ -82,6 +82,12 @@ export interface MCMessage {
 }
 export const latestMCMessage = writable<MCMessage | null>(null);
 
+// Global refresh signal — increments when project data should be reloaded
+export const refreshTrigger = writable(0);
+export function triggerRefresh() {
+  refreshTrigger.update(n => n + 1);
+}
+
 // Handle SSE events — only log meaningful milestones, not raw streaming tokens
 export function handleSSEEvent(event: SSEEvent) {
   const d = event.data as Record<string, unknown>;
@@ -130,25 +136,30 @@ export function handleSSEEvent(event: SSEEvent) {
       break;
     case 'build.milestone':
       if (d?.milestone) appendLog('text', String(d.milestone));
+      triggerRefresh();
       break;
     case 'build.complete': {
       const summary = d?.summary ? String(d.summary) : '🏁 Build finished — all tasks processed';
       appendLog('complete', summary);
       activeRun.set(null);
       addNotification('success', 'Build complete');
+      triggerRefresh();
       break;
     }
     case 'build.cancelled':
       appendLog('error', 'Build cancelled');
       activeRun.set(null);
+      triggerRefresh();
       break;
     case 'build.budget-exhausted':
       appendLog('error', '⚠️ Build paused — daily budget exhausted');
       activeRun.set(null);
       addNotification('warning', 'Budget exhausted — build paused');
+      triggerRefresh();
       break;
     case 'mc.message':
       latestMCMessage.set(d as MCMessage);
+      triggerRefresh();
       break;
     case 'run.complete':
       break;

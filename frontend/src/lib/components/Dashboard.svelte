@@ -1,9 +1,22 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import { projects, canAct, settings, addNotification, selectedProjectId } from '../stores/app';
+  import { onMount, onDestroy } from 'svelte';
+  import { projects, canAct, settings, addNotification, selectedProjectId, refreshTrigger } from '../stores/app';
   import { createProject, getProjects } from '../api';
   import ProjectCard from './ProjectCard.svelte';
   import ProjectDetail from './ProjectDetail.svelte';
+
+  // Auto-refresh project list when state changes
+  let dashRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+  const unsubRefresh = refreshTrigger.subscribe(async () => {
+    if (dashRefreshTimer) clearTimeout(dashRefreshTimer);
+    dashRefreshTimer = setTimeout(async () => {
+      try {
+        const updated = await getProjects();
+        projects.set(updated);
+      } catch { /* ignore */ }
+    }, 1000);
+  });
+  onDestroy(() => { unsubRefresh(); if (dashRefreshTimer) clearTimeout(dashRefreshTimer); });
 
   interface ModelOption {
     provider: string;
