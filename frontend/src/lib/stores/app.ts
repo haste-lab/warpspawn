@@ -11,7 +11,7 @@ export const agentLog = writable<AgentLogEntry[]>([]);
 export const activeRun = writable<ActiveRun | null>(null);
 export const notifications = writable<Notification[]>([]);
 export const showWizard = writable(false);
-export const currentView = writable<'dashboard' | 'project' | 'settings'>('dashboard');
+export const currentView = writable<'dashboard' | 'project' | 'settings' | 'help'>('dashboard');
 export const selectedProjectId = writable<string | null>(null);
 
 // Derived: setup state

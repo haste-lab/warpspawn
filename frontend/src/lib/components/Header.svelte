@@ -26,6 +26,9 @@
       <button class="nav-btn" class:active={$currentView === 'settings'} on:click={() => dispatch('nav', 'settings')}>
         Settings
       </button>
+      <button class="nav-btn" class:active={$currentView === 'help'} on:click={() => dispatch('nav', 'help')}>
+        Help
+      </button>
     </nav>
   </div>
 

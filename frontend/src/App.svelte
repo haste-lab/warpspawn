@@ -8,6 +8,7 @@
   import SetupWizard from './lib/components/SetupWizard.svelte';
   import SettingsPanel from './lib/components/SettingsPanel.svelte';
   import SetupBanner from './lib/components/SetupBanner.svelte';
+  import HelpPage from './lib/components/HelpPage.svelte';
   import Header from './lib/components/Header.svelte';
 
   let connected = false;
@@ -38,7 +39,7 @@
     }
   });
 
-  function handleNav(view: 'dashboard' | 'settings') {
+  function handleNav(view: 'dashboard' | 'settings' | 'help') {
     currentView.set(view);
     showWizard.set(false);
     if (view === 'dashboard') {
@@ -72,6 +73,8 @@
       <SetupWizard on:close={() => showWizard.set(false)} on:complete={() => { showWizard.set(false); currentView.set('dashboard'); }} />
     {:else if $currentView === 'settings'}
       <SettingsPanel />
+    {:else if $currentView === 'help'}
+      <HelpPage />
     {:else}
       <Dashboard />
     {/if}
