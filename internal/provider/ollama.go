@@ -26,9 +26,14 @@ func NewOllamaProvider(baseURL string) *OllamaProvider {
 	return &OllamaProvider{
 		BaseURL: strings.TrimRight(baseURL, "/"),
 		HTTPClient: &http.Client{
-			Timeout: 0, // no timeout — streaming responses can be long
+			Timeout: 0, // no timeout for streaming — per-request timeouts via context
 		},
 	}
+}
+
+// httpClientWithTimeout returns a client for non-streaming requests.
+func httpClientWithTimeout() *http.Client {
+	return &http.Client{Timeout: 10 * time.Second}
 }
 
 func (o *OllamaProvider) ID() string { return "ollama" }
@@ -38,7 +43,7 @@ func (o *OllamaProvider) HealthCheck(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("ollama health check: %w", err)
 	}
-	resp, err := o.HTTPClient.Do(req)
+	resp, err := httpClientWithTimeout().Do(req)
 	if err != nil {
 		return fmt.Errorf("ollama unreachable at %s: %w", o.BaseURL, err)
 	}
@@ -54,7 +59,7 @@ func (o *OllamaProvider) ListModels(ctx context.Context) ([]ModelInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	resp, err := o.HTTPClient.Do(req)
+	resp, err := httpClientWithTimeout().Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("ollama list models: %w", err)
 	}

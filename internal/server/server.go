@@ -20,6 +20,7 @@ import (
 type Server struct {
 	token      string
 	port       int
+	host       string
 	db         *db.DB
 	cfg        config.Config
 	configDir  string
@@ -36,10 +37,11 @@ type SSEEvent struct {
 }
 
 // New creates a new server instance.
-func New(port int, token string, database *db.DB, cfg config.Config, configDir string, providers map[string]provider.Provider) *Server {
+func New(port int, host, token string, database *db.DB, cfg config.Config, configDir string, providers map[string]provider.Provider) *Server {
 	s := &Server{
 		token:      token,
 		port:       port,
+		host:       host,
 		db:         database,
 		cfg:        cfg,
 		configDir:  configDir,
@@ -71,14 +73,46 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("PUT /api/settings", s.auth(s.handleUpdateSettings))
 	s.mux.HandleFunc("GET /api/models", s.auth(s.handleListModels))
 
+	// Token-to-cookie exchange: browser opens URL with ?token=..., gets a cookie, then redirected to clean URL
+	s.mux.HandleFunc("GET /auth", s.handleAuth)
+
 	// Serve embedded frontend (no auth on static assets — token checked on API calls)
 	s.mux.Handle("/", frontendHandler())
+}
+
+// handleAuth exchanges a URL token for an HttpOnly cookie, then redirects to the clean URL.
+func (s *Server) handleAuth(w http.ResponseWriter, r *http.Request) {
+	queryToken := r.URL.Query().Get("token")
+	if len(queryToken) != len(s.token) || subtle.ConstantTimeCompare([]byte(queryToken), []byte(s.token)) != 1 {
+		http.Error(w, "Invalid token", http.StatusUnauthorized)
+		return
+	}
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     "ws_session",
+		Value:    s.token,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
+		// No Secure flag — localhost doesn't use TLS
+	})
+
+	// Redirect to clean URL (strips token from browser history and address bar)
+	http.Redirect(w, r, "/", http.StatusFound)
 }
 
 // auth wraps a handler with session token authentication.
 func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Check Authorization header (constant-time comparison to prevent timing attacks)
+		// 1. Check HttpOnly cookie (preferred — set by /auth exchange)
+		if cookie, err := r.Cookie("ws_session"); err == nil {
+			if len(cookie.Value) == len(s.token) && subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(s.token)) == 1 {
+				next(w, r)
+				return
+			}
+		}
+
+		// 2. Check Authorization header (for API calls from frontend JS)
 		authHeader := r.Header.Get("Authorization")
 		expected := "Bearer " + s.token
 		if len(authHeader) == len(expected) && subtle.ConstantTimeCompare([]byte(authHeader), []byte(expected)) == 1 {
@@ -86,7 +120,7 @@ func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		// Check query parameter (for SSE EventSource which can't set headers)
+		// 3. Check query parameter (fallback for SSE EventSource)
 		queryToken := r.URL.Query().Get("token")
 		if len(queryToken) == len(s.token) && subtle.ConstantTimeCompare([]byte(queryToken), []byte(s.token)) == 1 {
 			next(w, r)
@@ -195,8 +229,9 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	// Preserve version
+	// Preserve version and validate bounds
 	updated.ConfigVersion = s.cfg.ConfigVersion
+	updated = config.ValidateConfig(updated)
 	if err := config.Save(s.configDir, updated); err != nil {
 		http.Error(w, "failed to save: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -262,12 +297,16 @@ func securityHeaders(next http.Handler) http.Handler {
 
 // Start starts the HTTP server. Returns the actual port (if auto-selected) and a shutdown function.
 func (s *Server) Start(ctx context.Context) (int, func(), error) {
-	addr := fmt.Sprintf("127.0.0.1:%d", s.port)
+	bindHost := s.host
+	if bindHost == "" {
+		bindHost = "127.0.0.1"
+	}
+	addr := fmt.Sprintf("%s:%d", bindHost, s.port)
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		// Try to find a free port
 		for attempt := s.port + 1; attempt < s.port+100; attempt++ {
-			addr = fmt.Sprintf("127.0.0.1:%d", attempt)
+			addr = fmt.Sprintf("%s:%d", bindHost, attempt)
 			listener, err = net.Listen("tcp", addr)
 			if err == nil {
 				s.port = attempt

@@ -285,9 +285,8 @@ func serveCmd(args []string) {
 	if *host == "0.0.0.0" {
 		slog.Warn("Server accessible on all network interfaces. API token required for all requests.")
 	}
-	_ = host
 
-	srv := server.New(*port, token, database, cfg, paths.ConfigDir, providers)
+	srv := server.New(*port, *host, token, database, cfg, paths.ConfigDir, providers)
 	actualPort, shutdown, err := srv.Start(context.Background())
 	if err != nil {
 		slog.Error("failed to start server", "error", err)
@@ -295,7 +294,7 @@ func serveCmd(args []string) {
 	}
 	defer shutdown()
 
-	url := fmt.Sprintf("http://localhost:%d?token=%s", actualPort, token)
+	url := fmt.Sprintf("http://localhost:%d/auth?token=%s", actualPort, token)
 
 	fmt.Printf(`
  __      __

@@ -3,10 +3,10 @@ package config
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
-
-	"encoding/json"
 )
 
 // Config holds all application configuration.
@@ -105,13 +105,48 @@ func Load(configDir string) (Config, error) {
 
 	var cfg Config
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		return DefaultConfig(), nil
+		// Config file is corrupt — log warning, use defaults, backup the bad file
+		backupPath := configPath + ".corrupt"
+		os.WriteFile(backupPath, data, 0600)
+		cfg = DefaultConfig()
+		Save(configDir, cfg)
+		return cfg, fmt.Errorf("config parse error (defaults restored, corrupt file saved to %s): %w", backupPath, err)
 	}
 
 	if cfg.ConfigVersion == 0 {
 		cfg = DefaultConfig()
 	}
+
+	// Validate and enforce bounds
+	cfg = ValidateConfig(cfg)
 	return cfg, nil
+}
+
+// ValidateConfig enforces safe bounds on configuration values.
+func ValidateConfig(cfg Config) Config {
+	if cfg.Execution.MaxToolCalls < 1 {
+		cfg.Execution.MaxToolCalls = 30
+	}
+	if cfg.Execution.MaxToolCalls > 200 {
+		cfg.Execution.MaxToolCalls = 200
+	}
+	if cfg.Execution.AgentTimeoutS < 10 {
+		cfg.Execution.AgentTimeoutS = 240
+	}
+	if cfg.Execution.AgentTimeoutS > 3600 {
+		cfg.Execution.AgentTimeoutS = 3600
+	}
+	if cfg.Budget.DailyLimitUSD < 0 {
+		cfg.Budget.DailyLimitUSD = 0
+	}
+	if cfg.Budget.DailyLimitUSD > 1000 {
+		cfg.Budget.DailyLimitUSD = 1000
+	}
+	validModes := map[string]bool{"unrestricted": true, "restricted": true, "approval": true}
+	if !validModes[cfg.Execution.ShellMode] {
+		cfg.Execution.ShellMode = "restricted"
+	}
+	return cfg
 }
 
 // Save writes config to disk.
@@ -132,6 +167,8 @@ func Save(configDir string, cfg Config) error {
 // GenerateSessionToken creates a cryptographic token for localhost API auth.
 func GenerateSessionToken() string {
 	b := make([]byte, 32)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		panic("crypto/rand failed: " + err.Error())
+	}
 	return hex.EncodeToString(b)
 }

@@ -1,20 +1,25 @@
 // API client for the Warpspawn Go backend
+// Auth: HttpOnly cookie set by /auth endpoint. Fetch sends it automatically (same-origin).
+// Fallback: Bearer token from sessionStorage for SSE and edge cases.
 
 const getToken = (): string => {
-  const params = new URLSearchParams(window.location.search);
-  const token = params.get('token') || '';
-  // Store in sessionStorage so subsequent navigations don't need the query param
-  if (token) sessionStorage.setItem('ws_token', token);
   return sessionStorage.getItem('ws_token') || '';
 };
 
-const headers = (): HeadersInit => ({
-  'Authorization': `Bearer ${getToken()}`,
-  'Content-Type': 'application/json',
-});
+const headers = (): HeadersInit => {
+  const h: HeadersInit = { 'Content-Type': 'application/json' };
+  // Add Bearer token as fallback if cookie auth fails
+  const token = getToken();
+  if (token) h['Authorization'] = `Bearer ${token}`;
+  return h;
+};
 
 async function api<T>(path: string, options?: RequestInit): Promise<T> {
-  const resp = await fetch(path, { ...options, headers: headers() });
+  const resp = await fetch(path, {
+    ...options,
+    headers: headers(),
+    credentials: 'same-origin', // sends HttpOnly cookie
+  });
   if (!resp.ok) throw new Error(`API error ${resp.status}: ${await resp.text()}`);
   return resp.json();
 }
@@ -44,10 +49,12 @@ export const abortRun = (runId: string) =>
     method: 'POST', body: JSON.stringify({ run_id: runId }),
   });
 
-// SSE event stream
+// SSE event stream — uses cookie auth (same-origin), with token fallback
 export function connectEvents(onEvent: (event: SSEEvent) => void): EventSource {
   const token = getToken();
-  const es = new EventSource(`/api/events?token=${token}`);
+  // EventSource sends cookies for same-origin. Add token as fallback query param.
+  const url = token ? `/api/events?token=${token}` : `/api/events`;
+  const es = new EventSource(url);
   es.onmessage = (e) => {
     try {
       onEvent(JSON.parse(e.data));
