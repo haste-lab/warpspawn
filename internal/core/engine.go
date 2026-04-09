@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strings"
 )
 
 // Action represents the decision engine's chosen next action.
@@ -146,7 +147,7 @@ func ChooseNextAction(workflow *Workflow, tasks []Task, backlogItems []BacklogIt
 		for i, u := range unrecognized {
 			names[i] = fmt.Sprintf("%s=%s", u.TaskID, u.Status)
 		}
-		unrecognizedNote = fmt.Sprintf(" Warning: %d task(s) have unrecognized statuses: %s.", len(unrecognized), joinStrings(names, ", "))
+		unrecognizedNote = fmt.Sprintf(" Warning: %d task(s) have unrecognized statuses: %s.", len(unrecognized), strings.Join(names, ", "))
 	}
 
 	return Action{
@@ -190,13 +191,3 @@ func filterBacklogByStatus(items []BacklogItem, status string) []BacklogItem {
 	return filtered
 }
 
-func joinStrings(strs []string, sep string) string {
-	result := ""
-	for i, s := range strs {
-		if i > 0 {
-			result += sep
-		}
-		result += s
-	}
-	return result
-}

@@ -624,13 +624,6 @@ func (s *Server) handleAbortRun(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"status": "aborted", "project_id": req.ProjectID})
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 // triggerBuild starts the autonomous build loop for a project.
 // Can be called from the chat handler or the build button.
 func (s *Server) triggerBuild(projectID, projectRoot string) {

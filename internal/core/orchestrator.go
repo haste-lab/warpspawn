@@ -430,18 +430,20 @@ Approved based on agent verification.
 func updateTaskStatusInFile(taskPath, newStatus string) {
 	data, err := os.ReadFile(taskPath)
 	if err != nil {
+		slog.Warn("failed to read task file for status update", "path", taskPath, "error", err)
 		return
 	}
 	text := string(data)
 	updated := strings.Replace(text, "- Status: "+ExtractMetadataValue(text, "Status"), "- Status: "+newStatus, 1)
-	tmpPath := taskPath + fmt.Sprintf(".tmp.%d", os.Getpid())
-	os.WriteFile(tmpPath, []byte(updated), 0644)
-	os.Rename(tmpPath, taskPath)
+	if err := atomicWrite(taskPath, []byte(updated)); err != nil {
+		slog.Error("failed to update task status", "path", taskPath, "error", err)
+	}
 }
 
 func appendToTaskSection(taskPath, section, content string) {
 	data, err := os.ReadFile(taskPath)
 	if err != nil {
+		slog.Warn("failed to read task file for section update", "path", taskPath, "error", err)
 		return
 	}
 	text := string(data)
@@ -449,9 +451,9 @@ func appendToTaskSection(taskPath, section, content string) {
 	replacement := "## " + section + "\n" + content
 	if strings.Contains(text, placeholder) {
 		updated := strings.Replace(text, placeholder, replacement, 1)
-		tmpPath := taskPath + fmt.Sprintf(".tmp.%d", os.Getpid())
-		os.WriteFile(tmpPath, []byte(updated), 0644)
-		os.Rename(tmpPath, taskPath)
+		if err := atomicWrite(taskPath, []byte(updated)); err != nil {
+			slog.Error("failed to update task section", "path", taskPath, "section", section, "error", err)
+		}
 	}
 }
 
@@ -459,16 +461,30 @@ func updateProjectStage(projectRoot, stage string) {
 	statePath := filepath.Join(projectRoot, "status", "project-state.md")
 	data, err := os.ReadFile(statePath)
 	if err != nil {
+		slog.Warn("failed to read project state", "path", statePath, "error", err)
 		return
 	}
 	text := string(data)
 	current := ExtractMetadataValue(text, "Current Stage")
 	if current != "" {
 		updated := strings.Replace(text, "- Current Stage: "+current, "- Current Stage: "+stage, 1)
-		tmpPath := statePath + fmt.Sprintf(".tmp.%d", os.Getpid())
-		os.WriteFile(tmpPath, []byte(updated), 0644)
-		os.Rename(tmpPath, statePath)
+		if err := atomicWrite(statePath, []byte(updated)); err != nil {
+			slog.Error("failed to update project stage", "path", statePath, "error", err)
+		}
 	}
+}
+
+// atomicWrite writes data to a file using the write-to-temp-then-rename pattern.
+func atomicWrite(path string, data []byte) error {
+	tmpPath := path + fmt.Sprintf(".tmp.%d", os.Getpid())
+	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
+		return fmt.Errorf("write temp file: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("rename temp file: %w", err)
+	}
+	return nil
 }
 
 func gitCommit(projectRoot, message string) {
@@ -483,8 +499,8 @@ func gitCommit(projectRoot, message string) {
 	cmd.Dir = projectRoot
 	cmd.Run()
 
-	// Commit
-	cmd = exec.Command("git", "commit", "-m", message, "--allow-empty")
+	// Commit (only if there are staged changes — no empty commits)
+	cmd = exec.Command("git", "commit", "-m", message)
 	cmd.Dir = projectRoot
 	cmd.Run()
 }

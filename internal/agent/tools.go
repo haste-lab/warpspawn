@@ -200,28 +200,6 @@ func validateCommandArg(arg string) error {
 	return nil
 }
 
-// extractCommandNames parses a shell command string and returns the base command names.
-// Handles: "cmd1 && cmd2", "cmd1 || cmd2", "cmd1; cmd2", "cmd1 | cmd2"
-func extractCommandNames(payload string) []string {
-	var names []string
-	// Split on shell operators
-	for _, sep := range []string{"&&", "||", ";", "|"} {
-		payload = strings.ReplaceAll(payload, sep, "\n")
-	}
-	for _, part := range strings.Split(payload, "\n") {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-		// First token is the command
-		fields := strings.Fields(part)
-		if len(fields) > 0 {
-			name := filepath.Base(fields[0])
-			names = append(names, name)
-		}
-	}
-	return names
-}
 
 // ToolResult is the outcome of executing a tool call.
 type ToolResult struct {

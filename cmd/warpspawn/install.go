@@ -28,7 +28,9 @@ func installCmd() {
 		fmt.Fprintf(os.Stderr, "Error: cannot determine binary path: %v\n", err)
 		os.Exit(1)
 	}
-	selfPath, _ = filepath.EvalSymlinks(selfPath)
+	if resolved, err := filepath.EvalSymlinks(selfPath); err == nil {
+		selfPath = resolved
+	}
 
 	// Check if already installed at target
 	if selfPath == targetPath {
