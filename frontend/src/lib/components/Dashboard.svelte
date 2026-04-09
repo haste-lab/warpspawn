@@ -1,8 +1,15 @@
 <script lang="ts">
-  import { projects, budget, activeRun, agentLog, canAct } from '../stores/app';
+  import { onMount } from 'svelte';
+  import { projects, budget, activeRun, agentLog, canAct, settings } from '../stores/app';
   import AgentPanel from './AgentPanel.svelte';
   import ProjectCard from './ProjectCard.svelte';
   import ProjectDetail from './ProjectDetail.svelte';
+
+  interface ModelOption {
+    provider: string;
+    id: string;
+    name: string;
+  }
 
   let showNewProject = false;
   let newProjectBrief = '';
@@ -10,14 +17,63 @@
   let creating = false;
   let viewingProjectId: string | null = null;
 
+  let modelStrategy: 'defaults' | 'custom' = 'defaults';
+  let availableModels: ModelOption[] = [];
+  let customRoles: Record<string, { provider: string; model: string }> = {};
+
+  // Load available models when the form opens
+  async function loadModels() {
+    try {
+      const resp = await fetch('/api/models', {
+        headers: { 'Authorization': `Bearer ${sessionStorage.getItem('ws_token') || ''}` }
+      });
+      if (resp.ok) {
+        availableModels = await resp.json();
+      }
+    } catch { /* ignore */ }
+  }
+
+  function openNewProject() {
+    showNewProject = true;
+    modelStrategy = 'defaults';
+    // Initialize custom roles from current defaults
+    if ($settings?.roles) {
+      customRoles = {};
+      for (const [role, cfg] of Object.entries($settings.roles)) {
+        customRoles[role] = { provider: cfg.provider, model: cfg.model };
+      }
+    }
+    loadModels();
+  }
+
+  function handleCustomRoleChange(role: string, value: string) {
+    const slashIdx = value.indexOf('/');
+    if (slashIdx < 0) return;
+    customRoles[role] = {
+      provider: value.substring(0, slashIdx),
+      model: value.substring(slashIdx + 1),
+    };
+    customRoles = customRoles; // trigger reactivity
+  }
+
+  const roleLabels: Record<string, { label: string; hint: string }> = {
+    'mission-control': { label: '🎛️ Mission Control', hint: 'Planning & orchestration' },
+    'architect':       { label: '🏗️ Architect', hint: 'System design' },
+    'ux':              { label: '✏️ UX Designer', hint: 'User journeys' },
+    'builder':         { label: '🛠️ Builder', hint: 'Code generation' },
+    'builder-light':   { label: '🔧 Builder Light', hint: 'Simple tasks' },
+    'reviewer-qa':     { label: '✅ Reviewer / QA', hint: 'Validation' },
+  };
+
   async function handleCreate() {
     if (!newProjectBrief.trim()) return;
     creating = true;
-    // TODO: call createProject API
+    // TODO: call createProject API with brief + model strategy
     creating = false;
     showNewProject = false;
     newProjectBrief = '';
     newProjectName = '';
+    modelStrategy = 'defaults';
   }
 
   function openProject(id: string) {
@@ -31,7 +87,7 @@
   {:else}
     <div class="dashboard-header">
       <h1>Projects</h1>
-      <button class="btn btn-primary" on:click={() => showNewProject = !showNewProject} disabled={!$canAct}>
+      <button class="btn btn-primary" on:click={openNewProject} disabled={!$canAct}>
         + New Project
       </button>
     </div>
@@ -51,6 +107,52 @@
             <textarea bind:value={newProjectBrief} rows="4"
               placeholder="Build a local weather dashboard that fetches data from Open-Meteo API and displays current conditions and 5-day forecast. Use vanilla HTML/CSS/JS. No framework."></textarea>
           </div>
+
+          <div class="strategy-section">
+            <label>Model strategy</label>
+            <div class="strategy-options">
+              <button
+                class="strategy-btn"
+                class:active={modelStrategy === 'defaults'}
+                on:click={() => modelStrategy = 'defaults'}
+              >
+                <strong>Defaults</strong>
+                <span class="text-xs text-muted">Use models from Settings</span>
+              </button>
+              <button
+                class="strategy-btn"
+                class:active={modelStrategy === 'custom'}
+                on:click={() => modelStrategy = 'custom'}
+              >
+                <strong>Custom</strong>
+                <span class="text-xs text-muted">Choose per role for this project</span>
+              </button>
+            </div>
+          </div>
+
+          {#if modelStrategy === 'custom'}
+            <div class="custom-roles">
+              {#each Object.entries(customRoles) as [role, cfg]}
+                {@const info = roleLabels[role] || { label: role, hint: '' }}
+                <div class="custom-role-row">
+                  <div class="custom-role-label">
+                    <span class="text-sm">{info.label}</span>
+                    <span class="text-xs text-dim">{info.hint}</span>
+                  </div>
+                  <select
+                    class="custom-role-select"
+                    value="{cfg.provider}/{cfg.model}"
+                    on:change={(e) => handleCustomRoleChange(role, e.currentTarget.value)}
+                  >
+                    {#each availableModels as m}
+                      <option value="{m.provider}/{m.id}">{m.provider}/{m.id}</option>
+                    {/each}
+                  </select>
+                </div>
+              {/each}
+            </div>
+          {/if}
+
           <div class="flex gap-2 justify-between">
             <button class="btn" on:click={() => showNewProject = false}>Cancel</button>
             <button class="btn btn-primary" on:click={handleCreate} disabled={!newProjectBrief.trim() || creating}>
@@ -117,5 +219,66 @@
     font-size: 3rem;
     margin-bottom: 12px;
     opacity: 0.6;
+  }
+
+  /* Strategy selector */
+  .strategy-section {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .strategy-options {
+    display: flex;
+    gap: 8px;
+  }
+  .strategy-btn {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    padding: 10px 14px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text);
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .strategy-btn:hover {
+    border-color: rgba(255, 255, 255, 0.15);
+    background: var(--bg-elevated);
+  }
+  .strategy-btn.active {
+    border-color: var(--accent);
+    background: var(--accent-dim);
+  }
+
+  /* Custom role picker */
+  .custom-roles {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px;
+    background: var(--bg);
+    border-radius: var(--radius-sm);
+    animation: slideDown 0.12s ease-out;
+  }
+  .custom-role-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+  }
+  .custom-role-label {
+    display: flex;
+    flex-direction: column;
+    min-width: 160px;
+  }
+  .custom-role-select {
+    flex: 1;
+    max-width: 260px;
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
   }
 </style>
