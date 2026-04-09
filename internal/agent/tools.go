@@ -360,6 +360,18 @@ func executeWriteFile(projectRoot, callID string, args map[string]interface{}) T
 	relPath, _ := args["path"].(string)
 	content, _ := args["content"].(string)
 
+	// Prevent duplicate task files: if writing TASK-XXX.md and task-xxx.md exists, redirect
+	dir := filepath.Dir(relPath)
+	base := filepath.Base(relPath)
+	if strings.HasPrefix(base, "TASK-") && strings.HasSuffix(base, ".md") {
+		lowerBase := strings.ToLower(base)
+		lowerPath := filepath.Join(dir, lowerBase)
+		existingPath := filepath.Join(projectRoot, lowerPath)
+		if _, err := os.Stat(existingPath); err == nil {
+			relPath = lowerPath // redirect to existing lowercase file
+		}
+	}
+
 	absPath, err := safePath(projectRoot, relPath)
 	if err != nil {
 		return ToolResult{ToolCallID: callID, Content: err.Error(), Error: err}

@@ -708,6 +708,7 @@ func (s *Server) runBuildLoop(ctx context.Context, cancel context.CancelFunc, pr
 	addMCMessage("🚀 Build started. I'll report progress as tasks complete.")
 
 	maxCycles := 50
+	stuckCount := 0
 	for cycle := 1; cycle <= maxCycles; cycle++ {
 		select {
 		case <-ctx.Done():
@@ -772,8 +773,23 @@ func (s *Server) runBuildLoop(ctx context.Context, cancel context.CancelFunc, pr
 		if result.StateUpdate == "budget-exhausted" || result.StateUpdate == "builder-failed" {
 			break
 		}
+		// Don't stop on blocked-skipped — continue to the next task
+		if result.StateUpdate == "blocked-skipped" {
+			continue
+		}
 		if result.Error != nil {
 			break
+		}
+		// Detect stuck cycles — if the same task stays in-flight for 3 consecutive cycles, stop
+		if result.StateUpdate == "in-flight" {
+			stuckCount++
+			if stuckCount >= 3 {
+				addMCMessage(fmt.Sprintf("⚠️ %s appears stuck (status: %s). Skipping to avoid a loop. Check the task manually.",
+					taskID, result.Action.Task.Status))
+				break
+			}
+		} else {
+			stuckCount = 0
 		}
 	}
 

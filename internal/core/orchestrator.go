@@ -304,6 +304,25 @@ func (o *Orchestrator) manageInFlight(ctx context.Context, projectRoot, projectI
 		return o.executeReviewer(ctx, projectRoot, projectID, action)
 	}
 
+	// Handle blocked tasks — skip them so the build loop doesn't spin
+	if task.Status == "blocked" {
+		slog.Info("task is blocked, skipping", "task", task.TaskID)
+		return OrchestratorResult{ProjectRoot: projectRoot, ProjectID: projectID, Action: action, StateUpdate: "blocked-skipped"}
+	}
+
+	// Handle in-review tasks without review — try running the reviewer
+	if task.Status == "in-review" && action.ReviewOutcome == nil {
+		slog.Info("task in-review without review, attempting reviewer", "task", task.TaskID)
+		return o.executeReviewer(ctx, projectRoot, projectID, action)
+	}
+
+	// Handle rework tasks — reset to ready-for-build
+	if task.Status == "rework" {
+		slog.Info("task in rework, resetting to ready-for-build", "task", task.TaskID)
+		updateTaskStatusInFile(task.Path, "ready-for-build")
+		return OrchestratorResult{ProjectRoot: projectRoot, ProjectID: projectID, Action: action, StateUpdate: "rework-reset"}
+	}
+
 	// In-flight but no clear next step
 	slog.Info("in-flight task, no state change", "task", task.TaskID, "status", task.Status)
 	return OrchestratorResult{ProjectRoot: projectRoot, ProjectID: projectID, Action: action, StateUpdate: "in-flight"}
