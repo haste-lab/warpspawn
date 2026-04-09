@@ -2,12 +2,96 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/haste-lab/warpspawn/internal/provider"
 )
+
+// extractToolCallsFromText parses tool calls that models output as JSON text
+// rather than through the native tool-use protocol.
+func extractToolCallsFromText(text string) []provider.ToolCall {
+	var calls []provider.ToolCall
+	callNum := 0
+
+	// Find all JSON objects that look like tool calls
+	for _, block := range findJSONBlocks(text) {
+		var parsed struct {
+			Name      string          `json:"name"`
+			Arguments json.RawMessage `json:"arguments"`
+		}
+		if err := json.Unmarshal([]byte(block), &parsed); err != nil {
+			continue
+		}
+		if parsed.Name == "" {
+			continue
+		}
+
+		callNum++
+		calls = append(calls, provider.ToolCall{
+			ID:        fmt.Sprintf("text_call_%d", callNum),
+			Name:      parsed.Name,
+			Arguments: string(parsed.Arguments),
+		})
+	}
+	return calls
+}
+
+// findJSONBlocks extracts top-level JSON object blocks from text.
+func findJSONBlocks(text string) []string {
+	var blocks []string
+	i := 0
+	for i < len(text) {
+		// Find opening brace
+		start := strings.IndexByte(text[i:], '{')
+		if start < 0 {
+			break
+		}
+		start += i
+
+		// Find matching closing brace
+		depth := 0
+		end := -1
+		inString := false
+		escape := false
+		for j := start; j < len(text); j++ {
+			if escape {
+				escape = false
+				continue
+			}
+			ch := text[j]
+			if ch == '\\' && inString {
+				escape = true
+				continue
+			}
+			if ch == '"' {
+				inString = !inString
+				continue
+			}
+			if inString {
+				continue
+			}
+			if ch == '{' {
+				depth++
+			} else if ch == '}' {
+				depth--
+				if depth == 0 {
+					end = j + 1
+					break
+				}
+			}
+		}
+		if end < 0 {
+			break
+		}
+		blocks = append(blocks, text[start:end])
+		i = end
+	}
+	return blocks
+}
 
 // RunConfig configures an agent run.
 type RunConfig struct {
@@ -122,6 +206,19 @@ func Run(ctx context.Context, cfg RunConfig) RunResult {
 			if chunk.Usage != nil {
 				totalUsage.InputTokens += chunk.Usage.InputTokens
 				totalUsage.OutputTokens += chunk.Usage.OutputTokens
+			}
+		}
+
+		// Fallback: if no native tool calls but the text contains JSON tool calls, extract them.
+		// This handles models that output tool calls as text rather than native format.
+		if len(responseToolCalls) == 0 && len(responseText) > 0 {
+			extracted := extractToolCallsFromText(responseText)
+			if len(extracted) > 0 {
+				slog.Debug("extracted tool calls from text", "count", len(extracted))
+				responseToolCalls = extracted
+				for i := range extracted {
+					emit(StreamEvent{Type: "tool_call", ToolCall: &extracted[i]})
+				}
 			}
 		}
 

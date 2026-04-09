@@ -114,12 +114,14 @@ func runCmd(args []string) {
 	workflow := core.DefaultWorkflow
 
 	orch := &core.Orchestrator{
-		Workflow:  &workflow,
-		Provider:  llmProvider,
-		DB:        database,
-		Budget:    budget,
-		MaxTools:  cfg.Execution.MaxToolCalls,
-		TimeoutS:  cfg.Execution.AgentTimeoutS,
+		Workflow:      &workflow,
+		Provider:      llmProvider,
+		DB:            database,
+		Budget:        budget,
+		MaxTools:      cfg.Execution.MaxToolCalls,
+		TimeoutS:      cfg.Execution.AgentTimeoutS,
+		BuilderModel:  *model,
+		ReviewerModel: *model,
 		OnEvent: func(event agent.StreamEvent) {
 			switch event.Type {
 			case "text":
@@ -143,8 +145,6 @@ func runCmd(args []string) {
 			}
 		},
 	}
-
-	_ = model // TODO: pass model to orchestrator for provider model selection
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

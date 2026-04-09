@@ -92,10 +92,12 @@ type ollamaChatRequest struct {
 type ollamaMessage struct {
 	Role      string           `json:"role"`
 	Content   string           `json:"content"`
+	Thinking  string           `json:"thinking,omitempty"`
 	ToolCalls []ollamaToolCall `json:"tool_calls,omitempty"`
 }
 
 type ollamaToolCall struct {
+	ID       string             `json:"id,omitempty"`
 	Function ollamaFunctionCall `json:"function"`
 }
 
@@ -238,9 +240,13 @@ func (o *OllamaProvider) Complete(ctx context.Context, messages []Message, opts 
 			if len(chunk.Message.ToolCalls) > 0 {
 				for _, tc := range chunk.Message.ToolCalls {
 					argsJSON, _ := json.Marshal(tc.Function.Arguments)
+					callID := tc.ID
+					if callID == "" {
+						callID = fmt.Sprintf("call_%d", time.Now().UnixNano())
+					}
 					ch <- StreamChunk{
 						ToolCall: &ToolCall{
-							ID:        fmt.Sprintf("call_%d", time.Now().UnixNano()),
+							ID:        callID,
 							Name:      tc.Function.Name,
 							Arguments: string(argsJSON),
 						},

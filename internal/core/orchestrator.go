@@ -18,13 +18,15 @@ import (
 
 // Orchestrator ties together the decision engine, agent executor, guard system, and state management.
 type Orchestrator struct {
-	Workflow  *Workflow
-	Provider  provider.Provider
-	DB        *db.DB
-	Budget    *guard.Budget
-	OnEvent   func(agent.StreamEvent) // callback for UI streaming
-	MaxTools  int
-	TimeoutS  int
+	Workflow      *Workflow
+	Provider      provider.Provider
+	DB            *db.DB
+	Budget        *guard.Budget
+	OnEvent       func(agent.StreamEvent) // callback for UI streaming
+	MaxTools      int
+	TimeoutS      int
+	BuilderModel  string // model for Builder agent
+	ReviewerModel string // model for Reviewer agent
 }
 
 // RunResult is the outcome of a single orchestration cycle for a project.
@@ -144,7 +146,7 @@ func (o *Orchestrator) executeBuilder(ctx context.Context, projectRoot, projectI
 	startTime := time.Now()
 	agentResult := agent.Run(ctx, agent.RunConfig{
 		ProjectRoot:  projectRoot,
-		Model:        "", // model is determined by the provider
+		Model:        o.BuilderModel,
 		Provider:     o.Provider,
 		SystemPrompt: systemPrompt,
 		UserPrompt:   userPrompt,
@@ -282,6 +284,7 @@ func (o *Orchestrator) executeReviewer(ctx context.Context, projectRoot, project
 	startTime := time.Now()
 	agentResult := agent.Run(ctx, agent.RunConfig{
 		ProjectRoot:  projectRoot,
+		Model:        o.ReviewerModel,
 		Provider:     o.Provider,
 		SystemPrompt: systemPrompt,
 		UserPrompt:   userPrompt,
