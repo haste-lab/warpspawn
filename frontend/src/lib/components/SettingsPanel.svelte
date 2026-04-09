@@ -32,9 +32,41 @@
     return `${provider}/${model}`;
   }
 
+  async function saveSettings(updated: typeof $settings) {
+    if (!updated) return;
+    saving = true;
+    try {
+      const result = await updateSettings(updated);
+      settings.set(result);
+      return true;
+    } catch (e: any) {
+      addNotification('error', `Failed to save: ${e.message}`);
+      return false;
+    } finally {
+      saving = false;
+    }
+  }
+
+  async function handleExecutionChange(field: string, value: string | number) {
+    if (!$settings) return;
+    const updated = { ...$settings };
+    updated.execution = { ...updated.execution, [field]: value };
+    if (await saveSettings(updated)) {
+      addNotification('success', `Updated ${field.replace(/_/g, ' ')}`);
+    }
+  }
+
+  async function handleBudgetChange(value: number) {
+    if (!$settings || value < 0) return;
+    const updated = { ...$settings };
+    updated.budget = { ...updated.budget, daily_limit_usd: value };
+    if (await saveSettings(updated)) {
+      addNotification('success', `Updated daily budget limit to $${value.toFixed(2)}`);
+    }
+  }
+
   async function handleRoleModelChange(role: string, value: string) {
     if (!$settings) return;
-    // value format: "provider/model"
     const slashIdx = value.indexOf('/');
     if (slashIdx < 0) return;
     const provider = value.substring(0, slashIdx);
@@ -44,15 +76,8 @@
     updated.roles = { ...updated.roles };
     updated.roles[role] = { provider, model };
 
-    saving = true;
-    try {
-      const result = await updateSettings(updated);
-      settings.set(result);
+    if (await saveSettings(updated)) {
       addNotification('success', `Updated ${role} → ${provider}/${model}`);
-    } catch (e: any) {
-      addNotification('error', `Failed to save: ${e.message}`);
-    } finally {
-      saving = false;
     }
   }
 
@@ -223,21 +248,24 @@
             <label>Max tool calls per agent</label>
             <p class="text-xs text-dim">Hard limit on tool invocations per run. Higher = more capable but more expensive.</p>
           </div>
-          <input type="number" value={$settings.execution.max_tool_calls} style="max-width: 80px" />
+          <input type="number" value={$settings.execution.max_tool_calls} style="max-width: 80px"
+            on:change={(e) => handleExecutionChange('max_tool_calls', parseInt(e.currentTarget.value))} />
         </div>
         <div class="settings-row">
           <div>
             <label>Agent timeout (seconds)</label>
             <p class="text-xs text-dim">Max wallclock time per agent run. Prevents runaway token consumption.</p>
           </div>
-          <input type="number" value={$settings.execution.agent_timeout_s} style="max-width: 80px" />
+          <input type="number" value={$settings.execution.agent_timeout_s} style="max-width: 80px"
+            on:change={(e) => handleExecutionChange('agent_timeout_s', parseInt(e.currentTarget.value))} />
         </div>
         <div class="settings-row">
           <div>
             <label>Shell execution mode</label>
             <p class="text-xs text-dim">Controls what shell commands agents can run on your machine.</p>
           </div>
-          <select value={$settings.execution.shell_mode} style="max-width: 160px">
+          <select value={$settings.execution.shell_mode} style="max-width: 160px"
+            on:change={(e) => handleExecutionChange('shell_mode', e.currentTarget.value)}>
             <option value="unrestricted">Unrestricted</option>
             <option value="restricted">Restricted (allowlist)</option>
             <option value="approval">Approval required</option>
@@ -256,7 +284,8 @@
           </div>
           <div class="flex items-center gap-2">
             <span class="text-muted">$</span>
-            <input type="number" value={$settings.budget.daily_limit_usd} min="0.5" step="0.5" style="max-width: 80px" />
+            <input type="number" value={$settings.budget.daily_limit_usd} min="0.5" step="0.5" style="max-width: 80px"
+              on:change={(e) => handleBudgetChange(parseFloat(e.currentTarget.value))} />
           </div>
         </div>
       </div>
