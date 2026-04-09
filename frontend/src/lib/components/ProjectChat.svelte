@@ -37,9 +37,14 @@
 
   $: hasUnfinishedTasks = totalTasks > 0 && doneTasks < totalTasks;
   $: hasSomeDone = doneTasks > 0;
-  $: showContinueButton = hasUnfinishedTasks && !buildRunning && phase === 'approved' && hasSomeDone;
-  $: showStartButton = phase === 'approved' && !buildRunning && !hasSomeDone && totalTasks > 0;
-  $: showFirstStart = (phase === 'approved' || phase === 'plan-review') && !buildRunning && totalTasks === 0 && !buildTriggered;
+  $: hasTasks = totalTasks > 0;
+  $: planReady = phase === 'approved' || phase === 'plan-review';
+  // Continue: has tasks, some done, not all done
+  $: showContinueButton = hasUnfinishedTasks && !buildRunning && hasSomeDone;
+  // Start: has tasks but none started
+  $: showStartButton = hasTasks && !buildRunning && !hasSomeDone && planReady;
+  // First start: plan just approved, no tasks yet
+  $: showFirstStart = planReady && !buildRunning && !hasTasks && !buildTriggered;
 
   // Detect build completion and errors from agent log
   const unsubLog = agentLog.subscribe((log) => {
