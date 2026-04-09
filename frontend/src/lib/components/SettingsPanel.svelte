@@ -158,8 +158,8 @@
 
     <section class="settings-section">
       <div class="section-intro">
-        <h2>Role → Model Assignment</h2>
-        <p class="text-muted text-sm">Each role has a specific purpose. Assign models based on what the role needs — code-generating roles need capable models, while planning/review roles can use lighter ones.</p>
+        <h2>Role → Model Assignment Defaults</h2>
+        <p class="text-muted text-sm">These defaults apply to every new project. Individual projects can override them at creation time (via strategy presets) or in project settings. Code-generating roles benefit from capable models, while planning and review roles can use lighter, cheaper ones.</p>
       </div>
 
       <div class="role-grid">
