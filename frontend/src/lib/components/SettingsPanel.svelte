@@ -264,7 +264,7 @@
           <div class="guardrail-header">
             <span class="guardrail-icon">🛡️</span>
             <strong>Shell Allowlist</strong>
-            <span class="badge" class:badge-green={$settings.execution.shell_mode === 'restricted'} class:badge-amber={$settings.execution.shell_mode === 'unrestricted'} class:badge-red={$settings.execution.shell_mode === 'approval'}>
+            <span class="badge" class:badge-green={$settings.execution.shell_mode === 'restricted'} class:badge-red={$settings.execution.shell_mode === 'unrestricted'} class:badge-amber={$settings.execution.shell_mode === 'approval'}>
               {$settings.execution.shell_mode}
             </span>
           </div>
