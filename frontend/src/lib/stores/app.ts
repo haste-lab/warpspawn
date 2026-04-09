@@ -67,28 +67,58 @@ export function appendLog(type: AgentLogEntry['type'], content: string) {
 
 // Handle SSE events
 export function handleSSEEvent(event: SSEEvent) {
+  const d = event.data as Record<string, unknown>;
+
   switch (event.type) {
+    case 'agent.text':
     case 'agent.chunk':
-      appendLog('text', (event.data as { text: string }).text);
+      if (d?.content) appendLog('text', String(d.content));
       break;
+    case 'agent.tool_call':
     case 'agent.tool':
-      appendLog('tool_call', JSON.stringify(event.data));
+      if (d?.content) appendLog('tool_call', String(d.content));
+      break;
+    case 'agent.tool_result':
+      if (d?.content) appendLog('tool_result', String(d.content));
       break;
     case 'agent.complete':
-      appendLog('complete', JSON.stringify(event.data));
+    case 'agent.error':
+      if (d?.summary) appendLog('complete', String(d.summary));
       activeRun.set(null);
       break;
-    case 'project.updated':
-      // Trigger project list refresh
+    case 'build.cycle': {
+      const cycle = d?.cycle || '?';
+      appendLog('text', `\n--- Build cycle ${cycle} ---`);
       break;
-    case 'budget.updated':
-      // Trigger budget refresh
+    }
+    case 'build.progress': {
+      const action = d?.action || 'unknown';
+      const state = d?.state || '';
+      appendLog('text', `Action: ${action} → ${state}`);
+      break;
+    }
+    case 'build.complete':
+      appendLog('complete', 'Build finished — all cycles complete');
+      activeRun.set(null);
+      addNotification('success', 'Build complete');
+      break;
+    case 'build.cancelled':
+      appendLog('error', 'Build cancelled');
+      activeRun.set(null);
+      break;
+    case 'build.budget-exhausted':
+      appendLog('error', 'Build paused — daily budget exhausted');
+      activeRun.set(null);
+      addNotification('warning', 'Budget exhausted — build paused');
+      break;
+    case 'run.complete':
+      // Legacy single-run event
       break;
     case 'escalation':
-      addNotification('warning', `Escalation: ${JSON.stringify(event.data)}`);
+      addNotification('warning', `Escalation: ${JSON.stringify(d)}`);
       break;
     case 'error':
-      addNotification('error', `Error: ${JSON.stringify(event.data)}`);
+      addNotification('error', `Error: ${JSON.stringify(d)}`);
       break;
   }
 }

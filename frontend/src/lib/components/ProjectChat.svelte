@@ -28,6 +28,7 @@
   let loading = false;
   let phase = existingPhase || 'shaping';
   let started = existingMessages != null && existingMessages.length > 0;
+  let buildRunning = false;
   let chatContainer: HTMLDivElement;
 
   afterUpdate(() => {
@@ -129,7 +130,8 @@
         },
       });
       if (!buildResp.ok) throw new Error(await buildResp.text());
-      addNotification('success', 'Plan approved and build started');
+      buildRunning = true;
+      addNotification('success', 'Build started — agents are working autonomously');
       dispatch('build-started');
     } catch (e: any) {
       addNotification('error', `Failed to start build: ${e.message}`);
@@ -148,9 +150,11 @@
         {phase === 'shaping' ? 'Shaping' : phase === 'plan-review' ? 'Plan Review' : 'Approved'}
       </span>
     </div>
-    {#if phase === 'approved' || phase === 'plan-review'}
-      <button class="btn btn-primary btn-sm" on:click={startBuild}>
-        Start Building →
+    {#if buildRunning}
+      <span class="badge badge-blue"><span class="pulse-dot-inline"></span> Building...</span>
+    {:else if phase === 'approved' || phase === 'plan-review'}
+      <button class="btn btn-primary btn-sm" on:click={startBuild} disabled={loading}>
+        {loading ? 'Starting...' : 'Start Building →'}
       </button>
     {/if}
   </div>
@@ -325,6 +329,16 @@
     font-style: italic;
     font-size: 0.85rem;
     animation: pulse 1.5s infinite;
+  }
+  .pulse-dot-inline {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    animation: pulse 1.5s infinite;
+    margin-right: 2px;
+    vertical-align: middle;
   }
   @keyframes pulse {
     0%, 100% { opacity: 1; }

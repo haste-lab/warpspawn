@@ -535,13 +535,57 @@ func (s *Server) handleStartBuild(w http.ResponseWriter, r *http.Request) {
 			},
 		}
 
-		result := orch.RunProject(ctx, projectRoot)
+		// Build loop: keep running cycles until no more actionable work
+		maxCycles := 50 // safety cap
+		for cycle := 1; cycle <= maxCycles; cycle++ {
+			select {
+			case <-ctx.Done():
+				s.Broadcast(SSEEvent{Type: "build.cancelled", Data: map[string]interface{}{"project_id": projectID}})
+				return
+			default:
+			}
+
+			s.Broadcast(SSEEvent{
+				Type: "build.cycle",
+				Data: map[string]interface{}{
+					"project_id": projectID,
+					"cycle":      cycle,
+				},
+			})
+
+			result := orch.RunProject(ctx, projectRoot)
+
+			s.Broadcast(SSEEvent{
+				Type: "build.progress",
+				Data: map[string]interface{}{
+					"project_id": projectID,
+					"cycle":      cycle,
+					"action":     result.Action.Kind,
+					"state":      result.StateUpdate,
+					"task":       result.Action.Task != nil,
+				},
+			})
+
+			// Stop conditions
+			if result.Action.Kind == "no-action" {
+				break
+			}
+			if result.StateUpdate == "budget-exhausted" {
+				s.Broadcast(SSEEvent{Type: "build.budget-exhausted", Data: map[string]interface{}{"project_id": projectID}})
+				break
+			}
+			if result.StateUpdate == "builder-failed" {
+				break
+			}
+			if result.Error != nil {
+				break
+			}
+		}
+
 		s.Broadcast(SSEEvent{
-			Type: "run.complete",
+			Type: "build.complete",
 			Data: map[string]interface{}{
 				"project_id": projectID,
-				"action":     result.Action.Kind,
-				"state":      result.StateUpdate,
 			},
 		})
 	}()
