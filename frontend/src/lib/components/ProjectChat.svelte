@@ -36,7 +36,10 @@
   let needsInput = false;
 
   $: hasUnfinishedTasks = totalTasks > 0 && doneTasks < totalTasks;
-  $: showContinueButton = hasUnfinishedTasks && !buildRunning && phase === 'approved' && buildTriggered && !buildCompleted;
+  $: hasSomeDone = doneTasks > 0;
+  $: showContinueButton = hasUnfinishedTasks && !buildRunning && phase === 'approved' && hasSomeDone;
+  $: showStartButton = phase === 'approved' && !buildRunning && !hasSomeDone && totalTasks > 0;
+  $: showFirstStart = (phase === 'approved' || phase === 'plan-review') && !buildRunning && totalTasks === 0 && !buildTriggered;
 
   // Detect build completion and errors from agent log
   const unsubLog = agentLog.subscribe((log) => {
@@ -221,18 +224,22 @@
     <div class="flex gap-2">
       {#if buildRunning}
         <button class="btn btn-danger btn-sm" on:click={pauseBuild}>Pause Building</button>
-      {:else if buildCompleted && !hasUnfinishedTasks}
+      {:else if !hasUnfinishedTasks && totalTasks > 0 && doneTasks === totalTasks}
         <span class="badge badge-green">Build complete</span>
       {:else if showContinueButton || needsInput}
         <button class="btn btn-primary btn-sm" on:click={startBuild} disabled={loading}>
-          {loading ? 'Starting...' : 'Continue Building →'}
+          {loading ? 'Starting...' : `Continue Building (${totalTasks - doneTasks} remaining) →`}
         </button>
         <button class="btn btn-sm" on:click={changePlan}>Change Plan</button>
-      {:else if (phase === 'approved' || phase === 'plan-review') && !buildTriggered}
+      {:else if showStartButton}
         <button class="btn btn-primary btn-sm" on:click={startBuild} disabled={loading}>
           {loading ? 'Starting...' : 'Start Building →'}
         </button>
         <button class="btn btn-sm" on:click={changePlan}>Change Plan</button>
+      {:else if showFirstStart}
+        <button class="btn btn-primary btn-sm" on:click={startBuild} disabled={loading}>
+          {loading ? 'Starting...' : 'Start Building →'}
+        </button>
       {/if}
     </div>
   </div>
