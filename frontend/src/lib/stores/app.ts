@@ -114,11 +114,13 @@ export function handleSSEEvent(event: SSEEvent) {
     case 'build.milestone':
       if (d?.milestone) appendLog('text', String(d.milestone));
       break;
-    case 'build.complete':
-      appendLog('complete', '🏁 Build finished — all tasks processed');
+    case 'build.complete': {
+      const summary = d?.summary ? String(d.summary) : '🏁 Build finished — all tasks processed';
+      appendLog('complete', summary);
       activeRun.set(null);
       addNotification('success', 'Build complete');
       break;
+    }
     case 'build.cancelled':
       appendLog('error', 'Build cancelled');
       activeRun.set(null);

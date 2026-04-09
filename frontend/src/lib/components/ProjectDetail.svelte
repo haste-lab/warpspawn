@@ -245,10 +245,21 @@
                     <span class="task-icon {si.cls}">{si.icon}</span>
                     <div class="task-info">
                       <span class="task-title">{task.title || task.id}</span>
-                      <span class="task-meta">{task.owner_role || ''}{task.priority ? ' · ' + task.priority : ''}</span>
+                      <div class="task-pipeline">
+                        {#each ['ready-for-build', 'in-build', 'in-review', 'done'] as stage}
+                          {@const stageOrder = ['intake', 'shaping', 'ready-for-build', 'in-build', 'in-review', 'done']}
+                          {@const currentIdx = stageOrder.indexOf(task.status === 'rework' ? 'in-build' : task.status)}
+                          {@const stageIdx = stageOrder.indexOf(stage)}
+                          <span class="pipe-stage"
+                            class:pipe-done={stageIdx < currentIdx || task.status === 'done'}
+                            class:pipe-active={stageIdx === currentIdx && task.status !== 'done'}
+                            class:pipe-blocked={task.status === 'blocked' && stageIdx === currentIdx}
+                          >{stage === 'ready-for-build' ? 'ready' : stage === 'in-build' ? 'build' : stage === 'in-review' ? 'review' : stage}</span>
+                          {#if stage !== 'done'}<span class="pipe-arrow">→</span>{/if}
+                        {/each}
+                      </div>
                     </div>
                   </div>
-                  <span class="badge {statusBadge(task.status)}">{task.status}</span>
                 </div>
               {/each}
             </div>
@@ -429,9 +440,37 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .task-meta {
-    font-size: 0.7rem;
+  .task-pipeline {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    margin-top: 2px;
+  }
+  .pipe-stage {
+    font-size: 0.65rem;
+    padding: 1px 5px;
+    border-radius: 3px;
     color: var(--text-dim);
+    background: var(--bg);
+  }
+  .pipe-stage.pipe-done {
+    color: var(--green);
+    background: var(--accent-dim);
+  }
+  .pipe-stage.pipe-active {
+    color: var(--blue);
+    background: var(--blue-dim);
+    font-weight: 700;
+  }
+  .pipe-stage.pipe-blocked {
+    color: var(--red);
+    background: var(--red-dim);
+    font-weight: 700;
+  }
+  .pipe-arrow {
+    font-size: 0.6rem;
+    color: var(--text-dim);
+    opacity: 0.4;
   }
 
   .brief-section summary {

@@ -209,6 +209,8 @@ The user has provided a project brief. Your job during the shaping phase:
 4. Format the plan clearly with "## Plan" heading and "TASK-XXX: Title — description" format
 5. Ask the user to approve, edit, or ask questions about the plan
 
+IMPORTANT: Always briefly acknowledge the user's input before responding. For example: "Got it — two players, same browser. Here's what I'd suggest:" or "Good point about mobile support. Let me adjust the plan:"
+
 Keep questions focused and concise. Group related questions. Don't ask more than 3-5 questions at once.`
 	} else {
 		systemPrompt = `You are Mission Control, the orchestrator of an autonomous software delivery framework.
@@ -220,6 +222,8 @@ The user has provided a project brief. Produce a high-level plan immediately:
 4. Keep tasks bounded and concrete (each should be implementable by one agent in one session)
 5. Order tasks by dependency (scaffold first, then core features, then polish)
 6. End with: "Approve this plan to start building, or tell me what to change."
+
+IMPORTANT: If the user provides additional context or answers questions, briefly acknowledge their input first. For example: "Got it — two players on the same browser. Here's the plan:" Then proceed with the plan.
 
 Do NOT ask questions first — go straight to the plan.`
 	}
@@ -464,6 +468,25 @@ func saveChat(projectRoot string, chat *ProjectChat) {
 	chatSessions[chat.ProjectID] = chat
 }
 
+func listAppFiles(projectRoot string) []string {
+	var files []string
+	appDir := filepath.Join(projectRoot, "app")
+	filepath.Walk(appDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		rel, _ := filepath.Rel(projectRoot, path)
+		if info.Size() > 0 { // only list non-empty files
+			files = append(files, rel)
+		}
+		return nil
+	})
+	if len(files) > 20 {
+		files = append(files[:20], fmt.Sprintf("... and %d more files", len(files)-20))
+	}
+	return files
+}
+
 func (s *Server) handleAbortRun(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ProjectID string `json:"project_id"`
@@ -635,10 +658,29 @@ func (s *Server) handleStartBuild(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		// Build summary
+		appFiles := listAppFiles(projectRoot)
+		summary := fmt.Sprintf("🏁 Build finished.\n\nProject files are at:\n  %s\n", projectRoot)
+		if len(appFiles) > 0 {
+			summary += "\nApplication files:\n"
+			for _, f := range appFiles {
+				summary += fmt.Sprintf("  %s\n", f)
+			}
+			// Check for common entry points
+			for _, entry := range []string{"index.html", "app/index.html", "public/index.html"} {
+				if _, err := os.Stat(filepath.Join(projectRoot, entry)); err == nil {
+					summary += fmt.Sprintf("\nTo open: xdg-open %s/%s\n", projectRoot, entry)
+					break
+				}
+			}
+		}
+		summary += "\nFiles persist on disk — they stay when Warpspawn is closed."
+
 		s.Broadcast(SSEEvent{
 			Type: "build.complete",
 			Data: map[string]interface{}{
 				"project_id": projectID,
+				"summary":    summary,
 			},
 		})
 	}()
