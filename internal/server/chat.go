@@ -71,14 +71,10 @@ func (s *Server) handleProjectChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Lock per-project chat — prevents race conditions from concurrent requests
+	// Load chat session (locked)
 	chatMu.Lock()
-	defer chatMu.Unlock()
-
-	// Get or create chat session
 	chat := getOrCreateChat(projectID, req.Mode)
 
-	// Load project brief for context
 	paths := config.DefaultPaths()
 	projectRoot := filepath.Join(paths.ProjectDir, projectID)
 	briefData, _ := os.ReadFile(filepath.Join(projectRoot, "docs/project-brief.md"))
@@ -93,17 +89,16 @@ func (s *Server) handleProjectChat(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// Pick model for MC role
 	model := s.cfg.Roles["mission-control"].Model
 	if model == "" {
 		model = "qwen3:8b"
 	}
 
-	// Check if user is approving the plan — handle without LLM call
+	// Check if user is approving — handle immediately without LLM call
 	if req.Message != "" && chat.Phase == "plan-review" {
 		lower := strings.ToLower(req.Message)
-		if lower == "go" || lower == "approve" || lower == "approved" || lower == "start" ||
-			lower == "yes" || lower == "y" || lower == "ok" ||
+		if lower == "go" || lower == "approve" || lower == "approved" || lower == "approved." ||
+			lower == "start" || lower == "yes" || lower == "y" || lower == "ok" ||
 			strings.Contains(lower, "looks good") || strings.Contains(lower, "start building") ||
 			strings.Contains(lower, "approve") {
 
@@ -117,6 +112,7 @@ func (s *Server) handleProjectChat(w http.ResponseWriter, r *http.Request) {
 				Timestamp: time.Now().UnixMilli(),
 			})
 			saveChat(projectRoot, chat)
+			chatMu.Unlock()
 
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(chatResponse{
@@ -129,8 +125,9 @@ func (s *Server) handleProjectChat(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Build LLM messages
+	// Snapshot messages for LLM call, then release the lock
 	llmMessages := buildShapingMessages(chat, brief)
+	chatMu.Unlock()
 
 	// Pick a provider
 	prov := s.pickProvider()
@@ -160,6 +157,9 @@ func (s *Server) handleProjectChat(w http.ResponseWriter, r *http.Request) {
 
 	replyText := reply.String()
 
+	// Re-lock to update session
+	chatMu.Lock()
+
 	// Check if MC produced a plan (contains task headings)
 	if strings.Contains(replyText, "TASK-") || strings.Contains(replyText, "## Plan") || strings.Contains(replyText, "## Tasks") {
 		chat.Phase = "plan-review"
@@ -172,16 +172,18 @@ func (s *Server) handleProjectChat(w http.ResponseWriter, r *http.Request) {
 		Timestamp: time.Now().UnixMilli(),
 	})
 
-	// Persist chat
+	// Persist chat and release lock
 	saveChat(projectRoot, chat)
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(chatResponse{
+	resp := chatResponse{
 		Reply:    replyText,
 		Phase:    chat.Phase,
 		Model:    model,
 		Messages: chat.Messages,
-	})
+	}
+	chatMu.Unlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }
 
 func (s *Server) handleGetChat(w http.ResponseWriter, r *http.Request) {
@@ -418,9 +420,7 @@ func parseTaskLine(line string) (title, description string) {
 }
 
 func getOrCreateChat(projectID, mode string) *ProjectChat {
-	chatMu.Lock()
-	defer chatMu.Unlock()
-
+	// NOTE: caller must hold chatMu
 	if chat, ok := chatSessions[projectID]; ok {
 		return chat
 	}
@@ -454,15 +454,14 @@ func loadChat(projectRoot, projectID string) *ProjectChat {
 }
 
 func saveChat(projectRoot string, chat *ProjectChat) {
+	// NOTE: caller must hold chatMu
 	chatPath := filepath.Join(projectRoot, "status", "shaping-chat.json")
 	data, _ := json.MarshalIndent(chat, "", "  ")
 	tmpPath := chatPath + fmt.Sprintf(".tmp.%d", os.Getpid())
 	os.WriteFile(tmpPath, data, 0644)
 	os.Rename(tmpPath, chatPath)
 
-	chatMu.Lock()
 	chatSessions[chat.ProjectID] = chat
-	chatMu.Unlock()
 }
 
 func min(a, b int) int {
