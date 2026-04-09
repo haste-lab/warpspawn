@@ -191,27 +191,28 @@ func (s *Server) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resolve project path from DB
 	paths := config.DefaultPaths()
-	projectRoot := filepath.Join(paths.ProjectDir, projectID)
 
-	// Safety: only delete if the project is inside our managed projects directory
+	// Try to find project path: first from SQLite, then assume managed dir
+	projectRoot := ""
+	if s.db != nil {
+		detail, err := s.db.GetProjectDetail(projectID)
+		if err == nil && detail.Path != "" {
+			projectRoot = detail.Path
+		}
+	}
+	if projectRoot == "" {
+		projectRoot = filepath.Join(paths.ProjectDir, projectID)
+	}
+
+	// Determine if project is inside managed directory
 	absProject, _ := filepath.Abs(projectRoot)
 	absProjects, _ := filepath.Abs(paths.ProjectDir)
-	if !strings.HasPrefix(absProject, absProjects+string(filepath.Separator)) {
-		http.Error(w, "cannot delete project outside managed directory", http.StatusForbidden)
-		return
-	}
+	insideManaged := strings.HasPrefix(absProject, absProjects+string(filepath.Separator))
 
-	// Check project exists
-	if _, err := os.Stat(projectRoot); os.IsNotExist(err) {
-		http.Error(w, "project not found", http.StatusNotFound)
-		return
-	}
+	slog.Info("deleting project", "id", projectID, "root", projectRoot, "managed", insideManaged)
 
-	slog.Info("deleting project", "id", projectID, "root", projectRoot)
-
-	// Remove from SQLite first
+	// Remove from SQLite
 	if s.db != nil {
 		s.db.DeleteProject(projectID)
 	}
@@ -221,11 +222,18 @@ func (s *Server) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
 	delete(chatSessions, projectID)
 	chatMu.Unlock()
 
-	// Remove project directory
-	if err := os.RemoveAll(projectRoot); err != nil {
-		slog.Error("failed to remove project directory", "error", err)
-		http.Error(w, "failed to delete project files: "+err.Error(), http.StatusInternalServerError)
-		return
+	// Only delete files if project is inside managed directory
+	// External projects (e.g. /tmp, imported) are only removed from the index
+	if insideManaged {
+		if _, err := os.Stat(projectRoot); err == nil {
+			if err := os.RemoveAll(projectRoot); err != nil {
+				slog.Error("failed to remove project directory", "error", err)
+				http.Error(w, "failed to delete project files: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
+	} else {
+		slog.Info("external project — removed from index only, files preserved", "path", projectRoot)
 	}
 
 	slog.Info("project deleted", "id", projectID)
