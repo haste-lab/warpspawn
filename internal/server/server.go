@@ -52,9 +52,11 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/budget", s.auth(s.handleBudget))
 	s.mux.HandleFunc("GET /api/events", s.auth(s.handleSSE))
 
-	// Static frontend (no auth — token is in the URL query param, checked on API calls)
-	// TODO: serve embedded frontend assets
-	s.mux.HandleFunc("GET /", s.handleFrontend)
+	// API endpoint for settings (needed by frontend)
+	s.mux.HandleFunc("GET /api/settings", s.auth(s.handleSettings))
+
+	// Serve embedded frontend (no auth on static assets — token checked on API calls)
+	s.mux.Handle("/", frontendHandler())
 }
 
 // auth wraps a handler with session token authentication.
@@ -164,19 +166,9 @@ func (s *Server) Broadcast(event SSEEvent) {
 	}
 }
 
-func (s *Server) handleFrontend(w http.ResponseWriter, r *http.Request) {
-	// Placeholder until we embed the Svelte build
-	w.Header().Set("Content-Type", "text/html")
-	fmt.Fprintf(w, `<!DOCTYPE html>
-<html>
-<head><title>Warpspawn</title></head>
-<body style="background:#0a0a0a;color:#eee;font-family:monospace;padding:40px;">
-<h1>Warpspawn</h1>
-<p>Autonomous agentic software delivery</p>
-<p>Frontend not yet built. API is active.</p>
-<p>Try: <a href="/api/health?token=%s" style="color:#72e6b8;">/api/health</a></p>
-</body>
-</html>`, s.token)
+func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(s.cfg)
 }
 
 // securityHeaders adds CSP, CORS, and other security headers.
