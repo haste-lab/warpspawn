@@ -1,0 +1,59 @@
+id: default
+statuses:
+  intake:
+    phase: planning
+    terminal: false
+    active: false
+  shaping:
+    phase: planning
+    terminal: false
+    active: false
+  ready-for-build:
+    phase: execution
+    terminal: false
+    active: false
+  in-build:
+    phase: execution
+    terminal: false
+    active: true
+  in-review:
+    phase: execution
+    terminal: false
+    active: true
+  rework:
+    phase: execution
+    terminal: false
+    active: true
+  blocked:
+    phase: execution
+    terminal: false
+    active: true
+  done:
+    phase: closed
+    terminal: true
+    active: false
+  archived:
+    phase: closed
+    terminal: true
+    active: false
+
+transitions:
+  - { from: intake, to: shaping, role: mission-control }
+  - { from: shaping, to: ready-for-build, role: mission-control }
+  - { from: ready-for-build, to: in-build, role: runtime }
+  - { from: in-build, to: in-review, role: builder }
+  - { from: in-build, to: blocked, role: builder }
+  - { from: in-review, to: done, role: mission-control }
+  - { from: in-review, to: rework, role: mission-control }
+  - { from: in-review, to: blocked, role: reviewer-qa }
+  - { from: rework, to: in-build, role: runtime }
+  - { from: blocked, to: ready-for-build, role: mission-control }
+  - { from: done, to: archived, role: mission-control }
+
+routing:
+  active_statuses: [in-build, in-review, rework, blocked]
+  ready_status: ready-for-build
+  shaping_status: shaping
+  terminal_statuses: [done, archived]
+  builder_entry: in-build
+  review_entry: in-review

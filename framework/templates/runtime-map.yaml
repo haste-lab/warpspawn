@@ -1,0 +1,71 @@
+project:
+  name: <project-name>
+  slug: <project-slug>
+  owner: <owner-name-or-team>
+  status: active
+  last_updated: <YYYY-MM-DD>
+
+runtime:
+  mission_control:
+    persistence: persistent
+    session_key: session:mc:<project-slug>
+    runtime: openclaw-session
+    notes:
+      - Primary control plane for this project.
+      - Owns intake, routing, closure, and escalation.
+
+  architect:
+    persistence: optional-persistent
+    session_key: session:arch:<project-slug>
+    runtime: openclaw-session
+    enabled: false
+    notes:
+      - Enable persistent mode only if architecture context is long-lived.
+
+  ux:
+    persistence: on-demand
+    session_key: session:ux:<project-slug>
+    runtime: openclaw-session
+    enabled: false
+    notes:
+      - Invoke for shaping, flow review, and acceptance criteria refinement.
+
+  builder:
+    persistence: project-dependent
+    session_key: session:builder:<project-slug>
+    runtime: acp-persistent
+    enabled: true
+    fallback_runtime: local-openclaw
+    notes:
+      - Prefer ACP-backed persistent runtime for iterative coding work.
+      - Keep implementation scoped to approved task files.
+
+  reviewer_qa:
+    persistence: on-demand
+    session_key: session:qa:<project-slug>
+    runtime: openclaw-session
+    enabled: false
+    notes:
+      - Default to bounded review passes tied to specific task handoffs.
+
+  research:
+    persistence: on-demand
+    session_key: session:research:<project-slug>
+    runtime: openclaw-session
+    enabled: false
+    notes:
+      - Use only when project files and trusted docs are insufficient.
+
+operating_rules:
+  source_of_truth:
+    - docs/
+    - backlog/
+    - tasks/
+    - reviews/
+    - status/
+  closure_role: mission_control
+  default_human_entrypoint: mission_control
+  notes:
+    - Do not use session memory as the authoritative project record.
+    - Keep one persistent Mission Control per active project.
+    - Avoid sharing Builder sessions across unrelated projects.
