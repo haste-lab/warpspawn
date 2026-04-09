@@ -73,6 +73,15 @@ export function appendLog(type: AgentLogEntry['type'], content: string) {
   });
 }
 
+// MC chat messages received via SSE during builds
+export interface MCMessage {
+  project_id: string;
+  role: string;
+  content: string;
+  timestamp: number;
+}
+export const latestMCMessage = writable<MCMessage | null>(null);
+
 // Handle SSE events — only log meaningful milestones, not raw streaming tokens
 export function handleSSEEvent(event: SSEEvent) {
   const d = event.data as Record<string, unknown>;
@@ -137,6 +146,9 @@ export function handleSSEEvent(event: SSEEvent) {
       appendLog('error', '⚠️ Build paused — daily budget exhausted');
       activeRun.set(null);
       addNotification('warning', 'Budget exhausted — build paused');
+      break;
+    case 'mc.message':
+      latestMCMessage.set(d as MCMessage);
       break;
     case 'run.complete':
       break;

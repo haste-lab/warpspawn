@@ -1,6 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher, onDestroy } from 'svelte';
-  import { addNotification, agentLog } from '../stores/app';
+  import { addNotification, agentLog, latestMCMessage } from '../stores/app';
   import { afterUpdate } from 'svelte';
 
   export let projectId: string;
@@ -46,6 +46,19 @@
   // First start: plan just approved, no tasks yet
   $: showFirstStart = planReady && !buildRunning && !hasTasks && !buildTriggered;
 
+  // Listen for MC messages broadcast during builds
+  const unsubMC = latestMCMessage.subscribe((msg) => {
+    if (msg && msg.project_id === projectId && msg.role === 'assistant') {
+      // Avoid duplicates — check if this message is already in the list
+      const isDuplicate = messages.some(m =>
+        m.role === 'assistant' && m.content === msg.content && Math.abs(m.timestamp - msg.timestamp) < 2000
+      );
+      if (!isDuplicate) {
+        messages = [...messages, { role: 'assistant', content: msg.content, timestamp: msg.timestamp }];
+      }
+    }
+  });
+
   // Detect build completion and errors from agent log
   const unsubLog = agentLog.subscribe((log) => {
     if (buildRunning) {
@@ -60,7 +73,7 @@
       }
     }
   });
-  onDestroy(() => unsubLog());
+  onDestroy(() => { unsubLog(); unsubMC(); });
   let chatContainer: HTMLDivElement;
 
   afterUpdate(() => {
@@ -161,8 +174,8 @@
   async function startBuild() {
     loading = true;
     try {
-      // Step 1: Approve the plan (create tasks) if not already approved
-      if (phase === 'plan-review') {
+      // Only approve if this is the first build (no tasks exist yet)
+      if (phase === 'plan-review' && !hasTasks) {
         const approveResp = await fetch(`/api/project/${projectId}/chat`, {
           method: 'POST',
           headers: {
@@ -177,7 +190,7 @@
         phase = approveData.phase || phase;
       }
 
-      // Step 2: Start the build
+      // Start/continue the build
       const buildResp = await fetch(`/api/project/${projectId}/build`, {
         method: 'POST',
         headers: {

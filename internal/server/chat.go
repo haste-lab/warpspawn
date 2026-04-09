@@ -682,15 +682,27 @@ func (s *Server) runBuildLoop(ctx context.Context, cancel context.CancelFunc, pr
 	}
 
 	addMCMessage := func(text string) {
+		ts := time.Now().UnixMilli()
 		chatMu.Lock()
 		chat := getOrCreateChat(projectID, "quick")
 		chat.Messages = append(chat.Messages, ChatMessage{
 			Role:      "assistant",
 			Content:   text,
-			Timestamp: time.Now().UnixMilli(),
+			Timestamp: ts,
 		})
 		saveChat(projectRoot, chat)
 		chatMu.Unlock()
+
+		// Broadcast to frontend so the chat updates in real-time
+		s.Broadcast(SSEEvent{
+			Type: "mc.message",
+			Data: map[string]interface{}{
+				"project_id": projectID,
+				"role":       "assistant",
+				"content":    text,
+				"timestamp":  ts,
+			},
+		})
 	}
 
 	addMCMessage("🚀 Build started. I'll report progress as tasks complete.")
