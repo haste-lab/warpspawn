@@ -66,7 +66,6 @@ func ValidateCommand(command string, args []string, mode ShellMode) error {
 	}
 
 	if mode == ShellRestricted {
-		// Extract base command name (strip path)
 		baseName := filepath.Base(command)
 		if !AllowedCommands[baseName] {
 			return fmt.Errorf("blocked: command %q not in allowlist (shell mode: restricted)", baseName)
@@ -78,9 +77,47 @@ func ValidateCommand(command string, args []string, mode ShellMode) error {
 				return fmt.Errorf("blocked: network command %q not allowed in restricted mode", baseName)
 			}
 		}
+
+		// Check bash -c / sh -c payloads — the actual commands inside the string
+		if (baseName == "bash" || baseName == "sh") && len(args) >= 2 && args[0] == "-c" {
+			payload := strings.Join(args[1:], " ")
+			for _, subcmd := range extractCommandNames(payload) {
+				if !AllowedCommands[subcmd] {
+					return fmt.Errorf("blocked: %s -c contains %q which is not in allowlist", baseName, subcmd)
+				}
+				for _, blocked := range []string{"curl", "wget", "ssh", "scp", "nc", "ncat", "netcat"} {
+					if subcmd == blocked {
+						return fmt.Errorf("blocked: %s -c contains network command %q", baseName, subcmd)
+					}
+				}
+			}
+		}
 	}
 
 	return nil
+}
+
+// extractCommandNames parses a shell command string and returns the base command names.
+// Handles: "cmd1 && cmd2", "cmd1 || cmd2", "cmd1; cmd2", "cmd1 | cmd2"
+func extractCommandNames(payload string) []string {
+	var names []string
+	// Split on shell operators
+	for _, sep := range []string{"&&", "||", ";", "|"} {
+		payload = strings.ReplaceAll(payload, sep, "\n")
+	}
+	for _, part := range strings.Split(payload, "\n") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		// First token is the command
+		fields := strings.Fields(part)
+		if len(fields) > 0 {
+			name := filepath.Base(fields[0])
+			names = append(names, name)
+		}
+	}
+	return names
 }
 
 // ToolResult is the outcome of executing a tool call.
