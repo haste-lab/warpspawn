@@ -60,6 +60,7 @@ func (s *Server) registerRoutes() {
 
 	// Project actions
 	s.mux.HandleFunc("POST /api/project/create", s.auth(s.handleCreateProject))
+	s.mux.HandleFunc("DELETE /api/project/{id}", s.auth(s.handleDeleteProject))
 	s.mux.HandleFunc("POST /api/project/{id}/chat", s.auth(s.handleProjectChat))
 	s.mux.HandleFunc("GET /api/project/{id}/chat", s.auth(s.handleGetChat))
 	s.mux.HandleFunc("POST /api/project/{id}/build", s.auth(s.handleStartBuild))

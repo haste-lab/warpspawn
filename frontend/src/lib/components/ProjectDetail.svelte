@@ -1,6 +1,8 @@
 <script lang="ts">
   import { createEventDispatcher, onMount } from 'svelte';
   import { getProjectDetail } from '../api';
+  import { addNotification, projects } from '../stores/app';
+  import { getProjects } from '../api';
   import ProjectChat from './ProjectChat.svelte';
 
   export let projectId: string;
@@ -12,6 +14,9 @@
   let shapingMode: 'quick' | 'guided' = 'quick';
   let showModeChoice = true;
   let error = '';
+  let existingChat: { mode: string; messages: any[]; phase: string } | null = null;
+  let showDeleteConfirm = false;
+  let deleting = false;
 
   interface TaskInfo {
     id: string;
@@ -44,6 +49,21 @@
   onMount(async () => {
     try {
       detail = await getProjectDetail(projectId);
+
+      // Check for existing shaping chat to enable resume
+      try {
+        const resp = await fetch(`/api/project/${projectId}/chat`, {
+          headers: { 'Authorization': `Bearer ${sessionStorage.getItem('ws_token') || ''}` }
+        });
+        if (resp.ok) {
+          const chatData = await resp.json();
+          if (chatData.messages && chatData.messages.length > 0) {
+            existingChat = chatData;
+            shapingMode = chatData.mode || 'quick';
+            showModeChoice = false; // skip mode choice, resume directly
+          }
+        }
+      } catch { /* no existing chat — fine */ }
     } catch (e: any) {
       error = e.message;
     } finally {
@@ -52,6 +72,27 @@
   });
 
   $: progressPct = detail && detail.total_tasks > 0 ? (detail.done_tasks / detail.total_tasks) * 100 : 0;
+
+  async function deleteProject() {
+    deleting = true;
+    try {
+      const resp = await fetch(`/api/project/${projectId}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${sessionStorage.getItem('ws_token') || ''}` },
+      });
+      if (!resp.ok) throw new Error(await resp.text());
+      addNotification('success', `Project "${detail?.name || projectId}" deleted`);
+      // Refresh project list and go back
+      const updated = await getProjects();
+      projects.set(updated);
+      dispatch('back');
+    } catch (e: any) {
+      addNotification('error', `Delete failed: ${e.message}`);
+    } finally {
+      deleting = false;
+      showDeleteConfirm = false;
+    }
+  }
 
   function statusBadge(status: string): string {
     const map: Record<string, string> = {
@@ -88,8 +129,25 @@
           {detail.current_stage || detail.lifecycle}
         </span>
       </div>
-      <button class="btn btn-primary">Run Next Task</button>
+      <div class="flex gap-2">
+        <button class="btn btn-primary">Run Next Task</button>
+        {#if !showDeleteConfirm}
+          <button class="btn btn-danger btn-sm" on:click={() => showDeleteConfirm = true}>Delete</button>
+        {/if}
+      </div>
     </div>
+
+    {#if showDeleteConfirm}
+      <div class="card delete-confirm">
+        <p><strong>Delete this project?</strong> This will permanently remove all project files, tasks, and history. This cannot be undone.</p>
+        <div class="flex gap-2 mt-2">
+          <button class="btn" on:click={() => showDeleteConfirm = false}>Cancel</button>
+          <button class="btn btn-danger" on:click={deleteProject} disabled={deleting}>
+            {deleting ? 'Deleting...' : 'Yes, delete permanently'}
+          </button>
+        </div>
+      </div>
+    {/if}
 
     {#if detail.objective}
       <div class="card">
@@ -122,6 +180,8 @@
         <ProjectChat
           {projectId}
           initialMode={shapingMode}
+          existingMessages={existingChat?.messages || null}
+          existingPhase={existingChat?.phase || ''}
           on:approved={async () => { detail = await getProjectDetail(projectId); }}
           on:build-started={async () => { detail = await getProjectDetail(projectId); }}
         />
@@ -244,6 +304,10 @@
   }
   .mode-btn:hover {
     border-color: rgba(255, 255, 255, 0.12);
+  }
+  .delete-confirm {
+    background: var(--red-dim);
+    border-color: rgba(255, 123, 123, 0.2);
   }
   .mode-btn.active {
     border-color: rgba(114, 230, 184, 0.3);

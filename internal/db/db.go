@@ -202,6 +202,19 @@ func (db *DB) UpsertProject(id, path, name, lifecycle, stage, epoch string) erro
 	return err
 }
 
+// DeleteProject removes a project and all related data from SQLite.
+func (db *DB) DeleteProject(projectID string) error {
+	tx, err := db.conn.Begin()
+	if err != nil {
+		return err
+	}
+	tx.Exec("DELETE FROM runs WHERE project_id = ?", projectID)
+	tx.Exec("DELETE FROM reviews WHERE project_id = ?", projectID)
+	tx.Exec("DELETE FROM tasks WHERE project_id = ?", projectID)
+	tx.Exec("DELETE FROM projects WHERE id = ?", projectID)
+	return tx.Commit()
+}
+
 // UpsertTask inserts or updates a task in the index.
 func (db *DB) UpsertTask(projectID, taskID, path, title, status, priority, ownerRole, modelTier string) error {
 	_, err := db.conn.Exec(`

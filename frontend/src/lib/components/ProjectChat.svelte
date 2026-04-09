@@ -6,6 +6,8 @@
   export let projectId: string;
   export let initialMode: 'quick' | 'guided' = 'quick';
   export let modelName: string = '';
+  export let existingMessages: ChatMsg[] | null = null;
+  export let existingPhase: string = '';
 
   const dispatch = createEventDispatcher();
 
@@ -21,11 +23,11 @@
     return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   }
 
-  let messages: ChatMsg[] = [];
+  let messages: ChatMsg[] = existingMessages || [];
   let input = '';
   let loading = false;
-  let phase = 'shaping';
-  let started = false;
+  let phase = existingPhase || 'shaping';
+  let started = existingMessages != null && existingMessages.length > 0;
   let chatContainer: HTMLDivElement;
 
   afterUpdate(() => {

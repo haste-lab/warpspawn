@@ -184,6 +184,55 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
+	projectID := r.PathValue("id")
+	if projectID == "" {
+		http.Error(w, "project ID required", http.StatusBadRequest)
+		return
+	}
+
+	// Resolve project path from DB
+	paths := config.DefaultPaths()
+	projectRoot := filepath.Join(paths.ProjectDir, projectID)
+
+	// Safety: only delete if the project is inside our managed projects directory
+	absProject, _ := filepath.Abs(projectRoot)
+	absProjects, _ := filepath.Abs(paths.ProjectDir)
+	if !strings.HasPrefix(absProject, absProjects+string(filepath.Separator)) {
+		http.Error(w, "cannot delete project outside managed directory", http.StatusForbidden)
+		return
+	}
+
+	// Check project exists
+	if _, err := os.Stat(projectRoot); os.IsNotExist(err) {
+		http.Error(w, "project not found", http.StatusNotFound)
+		return
+	}
+
+	slog.Info("deleting project", "id", projectID, "root", projectRoot)
+
+	// Remove from SQLite first
+	if s.db != nil {
+		s.db.DeleteProject(projectID)
+	}
+
+	// Remove chat session from memory
+	chatMu.Lock()
+	delete(chatSessions, projectID)
+	chatMu.Unlock()
+
+	// Remove project directory
+	if err := os.RemoveAll(projectRoot); err != nil {
+		slog.Error("failed to remove project directory", "error", err)
+		http.Error(w, "failed to delete project files: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	slog.Info("project deleted", "id", projectID)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "deleted", "id": projectID})
+}
+
 func writeProjectFile(projectRoot, relPath, content string) {
 	fullPath := filepath.Join(projectRoot, relPath)
 	os.MkdirAll(filepath.Dir(fullPath), 0755)
