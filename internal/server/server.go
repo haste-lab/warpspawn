@@ -58,6 +58,9 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/budget", s.auth(s.handleBudget))
 	s.mux.HandleFunc("GET /api/events", s.auth(s.handleSSE))
 
+	// Project actions
+	s.mux.HandleFunc("POST /api/project/create", s.auth(s.handleCreateProject))
+
 	// Settings and configuration
 	s.mux.HandleFunc("GET /api/settings", s.auth(s.handleSettings))
 	s.mux.HandleFunc("PUT /api/settings", s.auth(s.handleUpdateSettings))

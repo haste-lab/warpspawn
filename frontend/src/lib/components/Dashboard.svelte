@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { projects, budget, activeRun, agentLog, canAct, settings } from '../stores/app';
+  import { projects, budget, activeRun, agentLog, canAct, settings, addNotification } from '../stores/app';
+  import { createProject, getProjects } from '../api';
   import AgentPanel from './AgentPanel.svelte';
   import ProjectCard from './ProjectCard.svelte';
   import ProjectDetail from './ProjectDetail.svelte';
@@ -68,12 +69,31 @@
   async function handleCreate() {
     if (!newProjectBrief.trim()) return;
     creating = true;
-    // TODO: call createProject API with brief + model strategy
-    creating = false;
-    showNewProject = false;
-    newProjectBrief = '';
-    newProjectName = '';
-    modelStrategy = 'defaults';
+    try {
+      const result = await createProject(
+        newProjectBrief.trim(),
+        newProjectName.trim() || undefined,
+        modelStrategy,
+        modelStrategy === 'custom' ? customRoles : undefined,
+      );
+      addNotification('success', `Project "${result.id}" created`);
+
+      // Refresh project list
+      const updated = await getProjects();
+      projects.set(updated);
+
+      // Open the new project
+      viewingProjectId = result.id;
+
+      showNewProject = false;
+      newProjectBrief = '';
+      newProjectName = '';
+      modelStrategy = 'defaults';
+    } catch (e: any) {
+      addNotification('error', `Failed to create project: ${e.message}`);
+    } finally {
+      creating = false;
+    }
   }
 
   function openProject(id: string) {

@@ -31,9 +31,9 @@ export const testProvider = (provider: string, config: Record<string, string>) =
   api<{ ok: boolean; error?: string; models?: string[] }>('/api/provider/test', {
     method: 'POST', body: JSON.stringify({ provider, ...config }),
   });
-export const createProject = (brief: string, name?: string) =>
-  api<{ id: string }>('/api/project/create', {
-    method: 'POST', body: JSON.stringify({ brief, name }),
+export const createProject = (brief: string, name?: string, strategy?: string, roles?: Record<string, { provider: string; model: string }>) =>
+  api<{ id: string; path: string }>('/api/project/create', {
+    method: 'POST', body: JSON.stringify({ brief, name, strategy: strategy || 'defaults', roles }),
   });
 export const startRun = (projectId: string) =>
   api<{ run_id: string }>('/api/run/start', {
