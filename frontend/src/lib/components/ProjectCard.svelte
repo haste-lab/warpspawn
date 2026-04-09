@@ -14,36 +14,41 @@
     'in review': 'badge-amber',
     'review ready': 'badge-amber',
     'rework': 'badge-amber',
+    'intake': 'badge-dim',
+    'shaping': 'badge-dim',
     'needs attention': 'badge-red',
   }[project.CurrentStage?.toLowerCase()] || 'badge-dim';
 </script>
 
-<div class="card project-card">
+<button class="card project-card" on:click={() => dispatch('view', project.ID)}>
   <div class="project-header">
     <h3 class="truncate">{project.Name || project.ID}</h3>
     <span class="badge {stageColor}">{project.CurrentStage || project.Lifecycle}</span>
   </div>
 
-  <div class="project-tasks">
-    <div class="progress-bar">
-      <div class="progress-fill" style="width: {progressPct}%"></div>
+  {#if project.TotalTasks > 0}
+    <div class="project-tasks">
+      <div class="progress-bar">
+        <div class="progress-fill" style="width: {progressPct}%"></div>
+      </div>
+      <span class="text-xs text-muted">{project.DoneTasks}/{project.TotalTasks} tasks</span>
     </div>
-    <span class="text-xs text-muted">{project.DoneTasks}/{project.TotalTasks} tasks</span>
-  </div>
-
-  <div class="project-actions">
-    <button class="btn btn-sm" on:click|stopPropagation={() => dispatch('view', project.ID)}>View</button>
-    <button class="btn btn-sm btn-primary">Run Next</button>
-  </div>
-</div>
+  {:else}
+    <p class="text-xs text-dim">No tasks yet — open to start planning</p>
+  {/if}
+</button>
 
 <style>
   .project-card {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 10px;
     cursor: pointer;
     transition: border-color 0.15s;
+    text-align: left;
+    width: 100%;
+    font: inherit;
+    color: inherit;
   }
   .project-card:hover {
     border-color: var(--border-focus);
@@ -71,9 +76,5 @@
     background: var(--accent);
     border-radius: 999px;
     transition: width 0.3s;
-  }
-  .project-actions {
-    display: flex;
-    gap: 6px;
   }
 </style>

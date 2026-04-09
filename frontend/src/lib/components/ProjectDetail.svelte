@@ -11,12 +11,14 @@
 
   let detail: ProjectDetailData | null = null;
   let loading = true;
-  let shapingMode: 'quick' | 'guided' = 'quick';
-  let showModeChoice = true;
   let error = '';
   let existingChat: { mode: string; messages: any[]; phase: string } | null = null;
   let showDeleteConfirm = false;
   let deleting = false;
+
+  // For new projects without a chat yet
+  let shapingMode: 'quick' | 'guided' = 'quick';
+  let showModeChoice = false; // only shown for brand new intake projects
 
   interface TaskInfo {
     id: string;
@@ -50,20 +52,26 @@
     try {
       detail = await getProjectDetail(projectId);
 
-      // Check for existing shaping chat to enable resume
+      // Check for existing chat
       try {
         const resp = await fetch(`/api/project/${projectId}/chat`, {
-          headers: { 'Authorization': `Bearer ${sessionStorage.getItem('ws_token') || ''}` }
+          headers: { 'Authorization': `Bearer ${sessionStorage.getItem('ws_token') || ''}` },
+          credentials: 'same-origin',
         });
         if (resp.ok) {
           const chatData = await resp.json();
           if (chatData.messages && chatData.messages.length > 0) {
             existingChat = chatData;
             shapingMode = chatData.mode || 'quick';
-            showModeChoice = false; // skip mode choice, resume directly
           }
         }
-      } catch { /* no existing chat — fine */ }
+      } catch { /* no existing chat */ }
+
+      // Show mode choice only for brand-new intake projects with no chat history
+      if ((detail.current_stage === 'intake' || detail.current_stage === 'shaping') &&
+          detail.total_tasks === 0 && !existingChat) {
+        showModeChoice = true;
+      }
     } catch (e: any) {
       error = e.message;
     } finally {
@@ -72,6 +80,7 @@
   });
 
   $: progressPct = detail && detail.total_tasks > 0 ? (detail.done_tasks / detail.total_tasks) * 100 : 0;
+  $: isIntake = detail && (detail.current_stage === 'intake' || detail.current_stage === 'shaping') && detail.total_tasks === 0;
 
   async function deleteProject() {
     deleting = true;
@@ -79,10 +88,10 @@
       const resp = await fetch(`/api/project/${projectId}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${sessionStorage.getItem('ws_token') || ''}` },
+        credentials: 'same-origin',
       });
       if (!resp.ok) throw new Error(await resp.text());
       addNotification('success', `Project "${detail?.name || projectId}" deleted`);
-      // Refresh project list and go back
       const updated = await getProjects();
       projects.set(updated);
       dispatch('back');
@@ -92,6 +101,10 @@
       deleting = false;
       showDeleteConfirm = false;
     }
+  }
+
+  async function refreshDetail() {
+    detail = await getProjectDetail(projectId);
   }
 
   function statusBadge(status: string): string {
@@ -105,6 +118,14 @@
     return map[status] || 'badge-dim';
   }
 
+  function statusIcon(status: string): { icon: string; cls: string } {
+    if (status === 'done' || status === 'archived') return { icon: '✓', cls: 'done' };
+    if (status === 'in-build' || status === 'in-review') return { icon: '▸', cls: 'active' };
+    if (status === 'blocked' || status === 'rework') return { icon: '!', cls: 'warn' };
+    if (status === 'ready-for-build') return { icon: '○', cls: 'ready' };
+    return { icon: '·', cls: 'pending' };
+  }
+
   function formatTokens(n: number): string {
     if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
     if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K';
@@ -112,7 +133,7 @@
   }
 </script>
 
-<div class="detail">
+<div class="workspace">
   <button class="back-btn" on:click={() => dispatch('back')}>
     ← Back to projects
   </button>
@@ -122,7 +143,9 @@
   {:else if error}
     <p class="text-muted">Error: {error}</p>
   {:else if detail}
-    <div class="detail-header">
+
+    <!-- Header -->
+    <div class="ws-header">
       <div>
         <h1>{detail.name || detail.id}</h1>
         <span class="badge {statusBadge(detail.current_stage || detail.lifecycle)}">
@@ -130,7 +153,6 @@
         </span>
       </div>
       <div class="flex gap-2">
-        <button class="btn btn-primary">Run Next Task</button>
         {#if !showDeleteConfirm}
           <button class="btn btn-danger btn-sm" on:click={() => showDeleteConfirm = true}>Delete</button>
         {/if}
@@ -149,129 +171,117 @@
       </div>
     {/if}
 
-    {#if detail.objective}
-      <div class="card">
-        <h3 class="mb-2">Objective</h3>
-        <p class="objective-text">{detail.objective}</p>
-      </div>
-    {/if}
+    <!-- Main content: two columns on wide screens -->
+    <div class="ws-body">
+      <!-- Left: project info -->
+      <div class="ws-info">
+        {#if detail.objective}
+          <div class="card">
+            <h3 class="mb-2">Objective</h3>
+            <p class="objective-text">{detail.objective}</p>
+          </div>
+        {/if}
 
-    <!-- Shaping chat (shown for intake/shaping projects) -->
-    {#if detail.current_stage === 'intake' || detail.current_stage === 'shaping' || (detail.total_tasks === 0 && detail.current_stage !== 'done')}
+        <!-- Stats -->
+        {#if detail.stats.total_runs > 0 || detail.total_tasks > 0}
+          <div class="stats-row">
+            <div class="stat-card card">
+              <span class="stat-value">{detail.total_tasks}</span>
+              <span class="stat-label">Tasks</span>
+            </div>
+            <div class="stat-card card">
+              <span class="stat-value">{detail.done_tasks}</span>
+              <span class="stat-label">Done</span>
+            </div>
+            <div class="stat-card card">
+              <span class="stat-value">{detail.stats.total_runs}</span>
+              <span class="stat-label">Runs</span>
+            </div>
+            <div class="stat-card card">
+              <span class="stat-value">{formatTokens(detail.stats.total_input_tokens + detail.stats.total_output_tokens)}</span>
+              <span class="stat-label">Tokens</span>
+            </div>
+          </div>
+        {/if}
+
+        <!-- Progress -->
+        {#if detail.total_tasks > 0}
+          <div class="card">
+            <div class="flex justify-between items-center mb-2">
+              <h3>Tasks</h3>
+              <span class="text-xs text-muted">{detail.done_tasks}/{detail.total_tasks} done</span>
+            </div>
+            <div class="progress-bar-lg mb-2">
+              <div class="progress-fill-lg" style="width: {progressPct}%"></div>
+            </div>
+            <div class="task-list">
+              {#each detail.tasks as task}
+                {@const si = statusIcon(task.status)}
+                <div class="task-row">
+                  <div class="task-left">
+                    <span class="task-icon {si.cls}">{si.icon}</span>
+                    <div class="task-info">
+                      <span class="task-title">{task.title || task.id}</span>
+                      <span class="task-meta">{task.owner_role || ''}{task.priority ? ' · ' + task.priority : ''}</span>
+                    </div>
+                  </div>
+                  <span class="badge {statusBadge(task.status)}">{task.status}</span>
+                </div>
+              {/each}
+            </div>
+          </div>
+        {/if}
+
+        <!-- Brief (collapsible) -->
+        {#if detail.brief}
+          <details class="card brief-section">
+            <summary><h3>Project Brief</h3></summary>
+            <pre class="brief-content">{detail.brief}</pre>
+          </details>
+        {/if}
+      </div>
+    </div>
+
+    <!-- Mission Control chat — always at the bottom -->
+    <div class="ws-chat">
       {#if showModeChoice}
         <div class="card">
           <h3 class="mb-2">Plan your project</h3>
-          <p class="text-muted text-sm mb-2">Mission Control will create a task plan from your brief. Choose how:</p>
+          <p class="text-muted text-sm mb-2">Mission Control will create a task plan. Choose how:</p>
           <div class="mode-options">
             <button class="mode-btn" class:active={shapingMode === 'quick'} on:click={() => shapingMode = 'quick'}>
               <strong>Quick Start</strong>
-              <span class="text-xs text-muted">Generate a plan immediately. You review and approve before building starts.</span>
+              <span class="text-xs text-muted">Plan immediately, you approve</span>
             </button>
             <button class="mode-btn" class:active={shapingMode === 'guided'} on:click={() => shapingMode = 'guided'}>
-              <strong>Guided Shaping</strong>
-              <span class="text-xs text-muted">MC asks questions first, proposes alternatives, then creates a plan.</span>
+              <strong>Guided</strong>
+              <span class="text-xs text-muted">Q&A first, then plan</span>
             </button>
           </div>
           <button class="btn btn-primary mt-2" on:click={() => showModeChoice = false}>
-            Continue with {shapingMode === 'quick' ? 'Quick Start' : 'Guided Shaping'}
+            Continue
           </button>
         </div>
       {:else}
         <ProjectChat
           {projectId}
-          initialMode={shapingMode}
+          initialMode={isIntake ? shapingMode : 'quick'}
           existingMessages={existingChat?.messages || null}
           existingPhase={existingChat?.phase || ''}
-          on:approved={async () => { detail = await getProjectDetail(projectId); }}
-          on:build-started={async () => { detail = await getProjectDetail(projectId); }}
+          on:approved={refreshDetail}
+          on:build-started={refreshDetail}
         />
       {/if}
-    {/if}
-
-    <!-- Stats row -->
-    <div class="stats-row">
-      <div class="stat-card card">
-        <span class="stat-value">{detail.total_tasks}</span>
-        <span class="stat-label">Tasks</span>
-      </div>
-      <div class="stat-card card">
-        <span class="stat-value">{detail.done_tasks}</span>
-        <span class="stat-label">Completed</span>
-      </div>
-      <div class="stat-card card">
-        <span class="stat-value">{detail.stats.total_runs}</span>
-        <span class="stat-label">Agent Runs</span>
-      </div>
-      <div class="stat-card card">
-        <span class="stat-value">{formatTokens(detail.stats.total_input_tokens + detail.stats.total_output_tokens)}</span>
-        <span class="stat-label">Tokens Used</span>
-      </div>
-      <div class="stat-card card">
-        <span class="stat-value">${detail.stats.total_cost_usd.toFixed(2)}</span>
-        <span class="stat-label">Cost</span>
-      </div>
-      <div class="stat-card card">
-        <span class="stat-value">{detail.stats.total_tool_calls}</span>
-        <span class="stat-label">Tool Calls</span>
-      </div>
     </div>
 
-    <!-- Progress -->
-    <div class="card">
-      <div class="flex justify-between items-center mb-2">
-        <h3>Progress</h3>
-        <span class="text-sm text-muted">{detail.done_tasks}/{detail.total_tasks} tasks done</span>
-      </div>
-      <div class="progress-bar-lg">
-        <div class="progress-fill-lg" style="width: {progressPct}%"></div>
-      </div>
-    </div>
-
-    <!-- Task list -->
-    <div class="card">
-      <h3 class="mb-2">Tasks</h3>
-      {#if detail.tasks && detail.tasks.length > 0}
-        <div class="task-list">
-          {#each detail.tasks as task}
-            <div class="task-row">
-              <div class="flex items-center gap-2">
-                {#if task.status === 'done' || task.status === 'archived'}
-                  <span class="task-icon done">✓</span>
-                {:else if task.status === 'in-build' || task.status === 'in-review'}
-                  <span class="task-icon active">▸</span>
-                {:else if task.status === 'blocked' || task.status === 'rework'}
-                  <span class="task-icon warn">!</span>
-                {:else}
-                  <span class="task-icon pending">○</span>
-                {/if}
-                <span class="task-title">{task.title || task.id}</span>
-              </div>
-              <div class="flex items-center gap-2">
-                <span class="badge {statusBadge(task.status)}">{task.status}</span>
-                <span class="text-xs text-dim">{task.priority}</span>
-              </div>
-            </div>
-          {/each}
-        </div>
-      {:else}
-        <p class="text-muted text-sm">No tasks yet.</p>
-      {/if}
-    </div>
-
-    <!-- Brief (collapsible) -->
-    <details class="card brief-section">
-      <summary><h3>Project Brief</h3></summary>
-      <pre class="brief-content">{detail.brief || 'No brief available.'}</pre>
-    </details>
   {/if}
 </div>
 
 <style>
-  .detail {
+  .workspace {
     display: flex;
     flex-direction: column;
     gap: 16px;
-    max-width: 800px;
   }
   .back-btn {
     background: none;
@@ -283,73 +293,67 @@
     align-self: flex-start;
   }
   .back-btn:hover { color: var(--text); }
-  .mode-options {
-    display: flex;
-    gap: 8px;
-    margin-bottom: 4px;
-  }
-  .mode-btn {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    padding: 10px 14px;
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    color: var(--text);
-    cursor: pointer;
-    text-align: left;
-    transition: all 0.15s;
-  }
-  .mode-btn:hover {
-    border-color: rgba(255, 255, 255, 0.12);
-  }
-  .delete-confirm {
-    background: var(--red-dim);
-    border-color: rgba(255, 123, 123, 0.2);
-  }
-  .mode-btn.active {
-    border-color: rgba(114, 230, 184, 0.3);
-    background: var(--bg-elevated);
-  }
-  .detail-header {
+
+  .ws-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
   }
-  .detail-header > div {
+  .ws-header > div {
     display: flex;
     align-items: center;
     gap: 12px;
   }
+
+  .ws-body {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .ws-info {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .ws-chat {
+    margin-top: 4px;
+  }
+
+  .delete-confirm {
+    background: var(--red-dim);
+    border-color: rgba(255, 123, 123, 0.2);
+  }
+
   .objective-text {
     color: var(--text);
     font-size: 0.95rem;
     line-height: 1.6;
   }
+
   .stats-row {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-    gap: 10px;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
   }
   .stat-card {
     text-align: center;
-    padding: 12px;
+    padding: 10px 8px;
   }
   .stat-value {
     display: block;
-    font-size: 1.4rem;
+    font-size: 1.3rem;
     font-weight: 700;
     font-family: var(--font-mono);
     color: var(--text);
   }
   .stat-label {
-    font-size: 0.75rem;
+    font-size: 0.7rem;
     color: var(--text-dim);
   }
+
   .progress-bar-lg {
-    height: 8px;
+    height: 6px;
     background: var(--bg);
     border-radius: 999px;
     overflow: hidden;
@@ -360,6 +364,7 @@
     border-radius: 999px;
     transition: width 0.3s;
   }
+
   .task-list {
     display: flex;
     flex-direction: column;
@@ -368,21 +373,44 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 8px 0;
+    padding: 7px 0;
     border-bottom: 1px solid var(--border);
   }
   .task-row:last-child { border-bottom: none; }
+  .task-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
   .task-icon {
     width: 18px;
     text-align: center;
     font-size: 0.8rem;
     font-weight: 700;
+    flex-shrink: 0;
   }
   .task-icon.done { color: var(--green); }
   .task-icon.active { color: var(--blue); }
   .task-icon.warn { color: var(--amber); }
+  .task-icon.ready { color: var(--blue); opacity: 0.6; }
   .task-icon.pending { color: var(--text-dim); }
-  .task-title { font-size: 0.9rem; }
+  .task-info {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .task-title {
+    font-size: 0.85rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .task-meta {
+    font-size: 0.7rem;
+    color: var(--text-dim);
+  }
+
   .brief-section summary {
     cursor: pointer;
     list-style: none;
@@ -402,7 +430,31 @@
     color: var(--text-muted);
     white-space: pre-wrap;
     line-height: 1.6;
-    max-height: 400px;
+    max-height: 300px;
     overflow-y: auto;
   }
+
+  .mode-options {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 4px;
+  }
+  .mode-btn {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 8px 12px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text);
+    cursor: pointer;
+    text-align: left;
+    font-size: 0.85rem;
+    transition: all 0.15s;
+  }
+  .mode-btn:hover { border-color: rgba(255, 255, 255, 0.12); }
+  .mode-btn.active { border-color: rgba(114, 230, 184, 0.3); background: var(--bg-elevated); }
+  .mb-2 { margin-bottom: 8px; }
 </style>
