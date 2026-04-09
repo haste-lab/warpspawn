@@ -228,9 +228,12 @@ IMPORTANT: If the user provides additional context or answers questions, briefly
 Do NOT ask questions first — go straight to the plan.`
 	}
 
+	// Build project context: task statuses and file listing
+	projectContext := buildProjectContext(chat.ProjectID)
+
 	messages := []provider.Message{
 		{Role: "system", Content: systemPrompt},
-		{Role: "user", Content: "Project brief:\n\n" + brief},
+		{Role: "user", Content: "Project brief:\n\n" + brief + "\n\n" + projectContext},
 	}
 
 	// Add conversation history (skip the first user message since brief is already included)
@@ -245,6 +248,49 @@ Do NOT ask questions first — go straight to the plan.`
 	}
 
 	return messages
+}
+
+func buildProjectContext(projectID string) string {
+	paths := config.DefaultPaths()
+	projectRoot := filepath.Join(paths.ProjectDir, projectID)
+
+	var ctx strings.Builder
+
+	// Task statuses
+	tasks := core.ListTasks(projectRoot)
+	if len(tasks) > 0 {
+		ctx.WriteString("\n## Current task statuses:\n")
+		done, total := 0, len(tasks)
+		for _, t := range tasks {
+			status := t.Status
+			if status == "done" || status == "archived" {
+				done++
+			}
+			ctx.WriteString(fmt.Sprintf("- %s: %s (%s)\n", t.TaskID, t.Title, status))
+		}
+		ctx.WriteString(fmt.Sprintf("\nProgress: %d/%d tasks done.\n", done, total))
+	}
+
+	// App files
+	appFiles := listAppFiles(projectRoot)
+	if len(appFiles) > 0 {
+		ctx.WriteString("\n## Application files created:\n")
+		for _, f := range appFiles {
+			ctx.WriteString(fmt.Sprintf("- %s\n", f))
+		}
+		// Check for entry point
+		for _, entry := range []string{"index.html", "app/index.html", "public/index.html"} {
+			if _, err := os.Stat(filepath.Join(projectRoot, entry)); err == nil {
+				ctx.WriteString(fmt.Sprintf("\nEntry point: %s/%s (open in browser)\n", projectRoot, entry))
+				break
+			}
+		}
+	} else {
+		ctx.WriteString("\n## Application files: NONE created yet.\n")
+		ctx.WriteString(fmt.Sprintf("Project directory: %s\n", projectRoot))
+	}
+
+	return ctx.String()
 }
 
 func (s *Server) pickProvider() provider.Provider {

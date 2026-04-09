@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { createEventDispatcher } from 'svelte';
-  import { addNotification } from '../stores/app';
+  import { createEventDispatcher, onDestroy } from 'svelte';
+  import { addNotification, agentLog } from '../stores/app';
   import { afterUpdate } from 'svelte';
 
   export let projectId: string;
@@ -29,6 +29,16 @@
   let phase = existingPhase || 'shaping';
   let started = existingMessages != null && existingMessages.length > 0;
   let buildRunning = false;
+  let buildCompleted = false;
+
+  // Detect build completion from agent log
+  const unsubLog = agentLog.subscribe((log) => {
+    if (buildRunning && log.some(e => e.type === 'complete' && e.content.includes('Build finished'))) {
+      buildRunning = false;
+      buildCompleted = true;
+    }
+  });
+  onDestroy(() => unsubLog());
   let chatContainer: HTMLDivElement;
 
   afterUpdate(() => {
@@ -131,6 +141,7 @@
       });
       if (!buildResp.ok) throw new Error(await buildResp.text());
       buildRunning = true;
+      buildCompleted = false;
       addNotification('success', 'Build started — agents are working autonomously');
       dispatch('build-started');
     } catch (e: any) {
@@ -152,6 +163,8 @@
     </div>
     {#if buildRunning}
       <span class="badge badge-blue"><span class="pulse-dot-inline"></span> Building...</span>
+    {:else if buildCompleted}
+      <span class="badge badge-green">Build complete</span>
     {:else if phase === 'approved' || phase === 'plan-review'}
       <button class="btn btn-primary btn-sm" on:click={startBuild} disabled={loading}>
         {loading ? 'Starting...' : 'Start Building →'}
